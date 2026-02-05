@@ -36,9 +36,9 @@ machine precision. This does not seem entirely consistent with common
 expectations of working with matrices with large condition numbers.
 
 Under a coordinate transformation `x → [x[1], x[2]/10^4]`, `H` becomes the
-identity matrix which has a condition number of 1, and this reflects our actual
-experience with operations involving `H` better than the standard condition
-number. This package provides a scale-invariant analog of the condition number:
+identity matrix which has a condition number of 1, and this better reflects our
+actual experience with operations involving `H`. This package provides a
+scale-invariant analog of the condition number:
 
 ```jldoctest example; filter = r"1\.0\d*" => "1.0"
 julia> using ScaleInvariantAnalysis
