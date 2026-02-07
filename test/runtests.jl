@@ -20,6 +20,8 @@ end
     @test symscale([1.0 -0.2; -0.2 0]; exact=true) ≈ [1, 0.2]
     @test symscale([1.0 0; 0 2]; exact=true) ≈ [1, sqrt(2)]
     test_scaleinv(A -> symscale(A; exact=true), [2.0 1.0; 1.0 3.0], 1)
+    u, v = matrixscale([2.0 1.0; 1.0 3.0]; exact=true)
+    @test u ≈ v ≈ symscale([2.0 1.0; 1.0 3.0]; exact=true)
 
     @test condscale([1 0; 0 1e-8]) ≈ 1
     A = [1.0 -0.2; -0.2 0]
