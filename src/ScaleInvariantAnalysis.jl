@@ -55,41 +55,41 @@ function symscale(A::AbstractMatrix; exact::Bool=false)
 end
 
 """
-    a1, a2 = matrixscale(A; exact=false)
+    a, b = matrixscale(A; exact=false)
 
-Given a matrix `A`, return vectors `a1` and `a2` representing the "scale of each
-axis," so that `|A[i,j]| ~ a1[i] * a2[j]` for all `i, j`. `a1[i]` and `a2[j]`
-are nonnegative, and are zero only if `A[i, j] = 0` for all `j` or all `i`,
+Given a matrix `A`, return vectors `a` and `b` representing the "scale of each
+axis," so that `|A[i,j]| ~ a[i] * b[j]` for all `i, j`. `a[i]` and `b[j]` are
+nonnegative, and are zero only if `A[i, j] = 0` for all `j` or all `i`,
 respectively.
 
-With `exact=true`, `a1` and `a2` solve the optimization problem
+With `exact=true`, `a` and `b` solve the optimization problem
 
-    min ∑_{i,j : A[i,j] ≠ 0} (log(|A[i,j]| / (a1[i] * a2[j])))²
-    s.t. n * ∑_i log(a1[i]) = m * ∑_j log(a2[j])
+    min ∑_{i,j : A[i,j] ≠ 0} (log(|A[i,j]| / (a[i] * b[j])))²
+    s.t. ∑_i nA[i] * log(a[i]) = ∑_j mA[j] * log(b[j])
 
-where `m, n = size(A)`. Up to multiplication by a scalar, these vectors are
-covariant under changes of scale but not general linear transformations.
+where `nA` and `mA` are the number of nonzeros in each row and column,
+respectively. Up to multiplication by a scalar, these vectors are covariant
+under changes of scale but not general linear transformations.
 
 With `exact=false`, the pattern of nonzeros in `A` is approximated as `u * v'`,
-where `sum(u) * v[j]` is the number of nonzeros in column `j` and `sum(v) *
-u[i]` is the number of nonzeros in row `i`. This results in an `O(m*n)` rather
-than `O((m+n)^3)` algorithm.
+where `sum(u) * v[j] = mA[j]` and `sum(v) * u[i] = nA[i]`. This results in an
+`O(m*n)` rather than `O((m+n)^3)` algorithm.
 """
 function matrixscale(A::AbstractMatrix; exact::Bool=false)
     Base.require_one_based_indexing(A)
     ax1, ax2 = axes(A, 1), axes(A, 2)
-    (sumlogA1, nz1), (sumlogA2, nz2) = _matrixscale(A, ax1, ax2)
+    (s, ns), (t, mt) = _matrixscale(A, ax1, ax2)
     m, n = length(ax1), length(ax2)
-    if !exact || (all(==(n), nz1) && all(==(m), nz2))
-        z = sum(nz1)
-        u, v = nz1 / sqrt(z), nz2 / sqrt(z)
-        uᵀ1, vᵀ1 = sum(u), sum(v)
-        s′, t′ = sumlogA1 ./ u, sumlogA2 ./ v
-        αoffset, βoffset = s′ ./ vᵀ1, t′ ./ uᵀ1
+    if !exact || (all(==(n), ns) && all(==(m), mt))
+        z = sum(ns)
+        @assert sum(mt) == z "Inconsistent nonzero counts in rows and columns"
+        a = exp.(s ./ ns .- sum(s) / (2z))
+        b = exp.(t ./ mt .- sum(t) / (2z))
+        return a, b
     end
-    p = [fill(n, m); fill(-m, n)]   # used to enforce the constraint
+    p = vcat(ns, -mt)
     W = isnz(A)
-    a12 = exp.(cholesky(Diagonal(vcat(nz1, nz2)) + odblocks(W) + p * p') \ vcat(sumlogA1, sumlogA2))
+    a12 = exp.(cholesky(Diagonal(vcat(ns, mt)) + odblocks(W) + p * p') \ vcat(s, t))
     return a12[begin:begin+m-1], a12[m+begin:end]
 end
 
