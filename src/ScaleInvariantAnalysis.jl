@@ -3,7 +3,7 @@ module ScaleInvariantAnalysis
 using LinearAlgebra
 using SparseArrays
 
-export condscale, divmag, dotabs, symscale
+export condscale, divmag, dotabs, matrixscale, symscale
 
 include("utils.jl")
 
@@ -51,8 +51,48 @@ function symscale(A::AbstractMatrix; exact::Bool=false)
         offset = sum(sumlogA) / (2 * sum(nz))
         return exp.(sumlogA ./ nz .- offset)
     end
-    return exp.(cholesky(Diagonal(nz) + (!iszero).(A)) \ sumlogA)
+    return exp.(cholesky(Diagonal(nz) + isnz(A)) \ sumlogA)
 end
+
+"""
+    a, b = matrixscale(A; exact=false)
+
+Given a matrix `A`, return vectors `a` and `b` representing the "scale of each
+axis," so that `|A[i,j]| ~ a[i] * b[j]` for all `i, j`. `a[i]` and `b[j]` are
+nonnegative, and are zero only if `A[i, j] = 0` for all `j` or all `i`,
+respectively.
+
+With `exact=true`, `a` and `b` solve the optimization problem
+
+    min ∑_{i,j : A[i,j] ≠ 0} (log(|A[i,j]| / (a[i] * b[j])))²
+    s.t. ∑_i nA[i] * log(a[i]) = ∑_j mA[j] * log(b[j])
+
+where `nA` and `mA` are the number of nonzeros in each row and column,
+respectively. Up to multiplication by a scalar, these vectors are covariant
+under changes of scale but not general linear transformations.
+
+With `exact=false`, the pattern of nonzeros in `A` is approximated as `u * v'`,
+where `sum(u) * v[j] = mA[j]` and `sum(v) * u[i] = nA[i]`. This results in an
+`O(m*n)` rather than `O((m+n)^3)` algorithm.
+"""
+function matrixscale(A::AbstractMatrix; exact::Bool=false)
+    Base.require_one_based_indexing(A)
+    ax1, ax2 = axes(A, 1), axes(A, 2)
+    (s, ns), (t, mt) = _matrixscale(A, ax1, ax2)
+    m, n = length(ax1), length(ax2)
+    if !exact || (all(==(n), ns) && all(==(m), mt))
+        z = sum(ns)
+        @assert sum(mt) == z "Inconsistent nonzero counts in rows and columns"
+        a = exp.(s ./ ns .- sum(s) / (2z))
+        b = exp.(t ./ mt .- sum(t) / (2z))
+        return a, b
+    end
+    p = vcat(ns, -mt)
+    W = isnz(A)
+    a12 = exp.(cholesky(Diagonal(vcat(ns, mt)) + odblocks(W) + p * p') \ vcat(s, t))
+    return a12[begin:begin+m-1], a12[m+begin:end]
+end
+
 
 ratio_nz(n, d) = iszero(d) ? zero(n) / oneunit(d) : n / d
 

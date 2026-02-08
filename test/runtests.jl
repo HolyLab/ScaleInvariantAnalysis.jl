@@ -15,11 +15,43 @@ function test_scaleinv(f, A::AbstractMatrix, p::Int; iter=10, rtol=sqrt(eps(floa
     @test npass ≥ iter - 1
 end
 
+function test_sumlog(A, a, b; rtol=1e-6)
+    α, β = log.(a), log.(b)
+    Aref = sum(abs(log(abs(A[i, j]))) for i in axes(A, 1), j in axes(A, 2) if A[i, j] != 0)
+    for j in axes(A, 2)
+        s = 0.0
+        for i in axes(A, 1)
+            if A[i, j] != 0
+                s += log(abs(A[i, j])) - α[i] - β[j]
+            end
+        end
+        @test abs(s) ≤ rtol * Aref
+    end
+    for i in axes(A, 1)
+        s = 0.0
+        for j in axes(A, 2)
+            if A[i, j] != 0
+                s += log(abs(A[i, j])) - α[i] - β[j]
+            end
+        end
+        @test abs(s) ≤ rtol * Aref
+    end
+end
+
 @testset "ScaleInvariantAnalysis.jl" begin
     @test symscale([2.0 1.0; 1.0 3.0]) ≈ symscale([2.0 1.0; 1.0 3.0]; exact=true) ≈ exp.([3 1; 1 3] \ [log(2.0); log(3.0)])
     @test symscale([1.0 -0.2; -0.2 0]; exact=true) ≈ [1, 0.2]
     @test symscale([1.0 0; 0 2]; exact=true) ≈ [1, sqrt(2)]
     test_scaleinv(A -> symscale(A; exact=true), [2.0 1.0; 1.0 3.0], 1)
+    a, b = matrixscale([2.0 1.0; 1.0 3.0]; exact=true)
+    @test a ≈ b ≈ symscale([2.0 1.0; 1.0 3.0]; exact=true)
+    a′, b′ = matrixscale([2.0 1.0; 1.0 3.0])
+    @test a′ ≈ a && b′ ≈ b
+    A = [0.0 1.0; -2.0 0.0]
+    a, b = matrixscale(A; exact=true)
+    test_sumlog(A, a, b)
+    a′, b′ = matrixscale(A)
+    @test sum(log, a) ≈ sum(log, b) ≈ sum(log, a′) ≈ sum(log, b′)
 
     @test condscale([1 0; 0 1e-8]) ≈ 1
     A = [1.0 -0.2; -0.2 0]
