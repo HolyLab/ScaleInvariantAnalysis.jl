@@ -67,8 +67,8 @@ With `exact=true`, `a1` and `a2` solve the optimization problem
     min ∑_{i,j : A[i,j] ≠ 0} (log(|A[i,j]| / (a1[i] * a2[j])))²
     s.t. n * ∑_i log(a1[i]) = m * ∑_j log(a2[j])
 
-where `m, n = size(A)`. These vectors are covariant under changes of scale but
-not general linear transformations.
+where `m, n = size(A)`. Up to multiplication by a scalar, these vectors are
+covariant under changes of scale but not general linear transformations.
 
 With `exact=false`, the pattern of nonzeros in `A` is approximated as `u * v'`,
 where `sum(u) * v[j]` is the number of nonzeros in column `j` and `sum(v) *
@@ -80,14 +80,16 @@ function matrixscale(A::AbstractMatrix; exact::Bool=false)
     ax1, ax2 = axes(A, 1), axes(A, 2)
     (sumlogA1, nz1), (sumlogA2, nz2) = _matrixscale(A, ax1, ax2)
     m, n = length(ax1), length(ax2)
+    if !exact || (all(==(n), nz1) && all(==(m), nz2))
+        z = sum(nz1)
+        u, v = nz1 / sqrt(z), nz2 / sqrt(z)
+        uᵀ1, vᵀ1 = sum(u), sum(v)
+        s′, t′ = sumlogA1 ./ u, sumlogA2 ./ v
+        αoffset, βoffset = s′ ./ vᵀ1, t′ ./ uᵀ1
+    end
     p = [fill(n, m); fill(-m, n)]   # used to enforce the constraint
-    # if !exact || (all(==(n), nz1) && all(==(m), nz2))
-    #     # Sherman-Morrison formula for efficiency
-    #     offset = sum(sumlogA) / (2 * sum(nz))
-    #     return exp.(sumlogA ./ nz .- offset)
-    # end
-    Anz = isnz(A)
-    a12 = exp.(cholesky(Diagonal(vcat(nz1, nz2)) + odblocks(Anz) + p * p') \ vcat(sumlogA1, sumlogA2))
+    W = isnz(A)
+    a12 = exp.(cholesky(Diagonal(vcat(nz1, nz2)) + odblocks(W) + p * p') \ vcat(sumlogA1, sumlogA2))
     return a12[begin:begin+m-1], a12[m+begin:end]
 end
 
