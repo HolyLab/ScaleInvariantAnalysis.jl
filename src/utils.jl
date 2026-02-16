@@ -34,6 +34,16 @@ end
 
 isnz(A) = .!iszero.(A)
 
+function divsafe!(sumlog, nz; sentinel=-Inf)
+    for i in eachindex(sumlog, nz)
+        if iszero(nz[i])
+           nz[i] = 1
+           sumlog[i] = sentinel
+        end
+    end
+    return sumlog, nz
+end
+
 function odblocks(Anz::AbstractMatrix{T}) where T
     m, n = size(Anz)
     return [zeros(T, m, m) Anz; Anz' zeros(T, n, n)]

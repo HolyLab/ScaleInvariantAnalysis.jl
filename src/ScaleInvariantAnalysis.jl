@@ -24,7 +24,7 @@ end
 
 
 """
-    a = symscale(A; exact=false)
+    a = symscale(A; exact=false, regularize=false)
 
 Given a matrix `A` assumed to be symmetric, return a vector `a` representing the
 "scale of each axis," so that `|A[i,j]| ~ a[i] * a[j]` for all `i, j`. `a[i]` is
@@ -39,9 +39,10 @@ transformations.
 
 With `exact=false`, the pattern of nonzeros in `A` is approximated as `u * u'`,
 where `sum(u) * u[i] = nz[i]` is the number of nonzero in row `i`. This results in an
-`O(n^2)` rather than `O(n^3)` algorithm.
+`O(n^2)` rather than `O(n^3)` algorithm. `regularize=true` adds a small offset to the
+diagonal (relevant only when `exact=true`), which handles all-zero rows of `A`.
 """
-function symscale(A::AbstractMatrix; exact::Bool=false)
+function symscale(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     ax = axes(A, 1)
     axes(A, 2) == ax || throw(ArgumentError("symscale requires a square matrix"))
     sumlogA, nz = _symscale(A, ax)
@@ -49,13 +50,17 @@ function symscale(A::AbstractMatrix; exact::Bool=false)
     if !exact || all(==(n), nz)
         # Sherman-Morrison formula for efficiency
         offset = sum(sumlogA) / (2 * sum(nz))
+        divsafe!(sumlogA, nz)
         return exp.(sumlogA ./ nz .- offset)
     end
-    return exp.(cholesky(Diagonal(nz) + isnz(A)) \ sumlogA)
+    τ = regularize ? sqrt(eps(eltype(sumlogA))) : zero(eltype(sumlogA))
+    W = isnz(A)
+    divsafe!(sumlogA, vec(sum(W; dims=2)); sentinel=-1/τ)
+    return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
 """
-    a, b = matrixscale(A; exact=false)
+    a, b = matrixscale(A; exact=false, regularize=false)
 
 Given a matrix `A`, return vectors `a` and `b` representing the "scale of each
 axis," so that `|A[i,j]| ~ a[i] * b[j]` for all `i, j`. `a[i]` and `b[j]` are
@@ -75,7 +80,7 @@ With `exact=false`, the pattern of nonzeros in `A` is approximated as `u * v'`,
 where `sum(u) * v[j] = mA[j]` and `sum(v) * u[i] = nA[i]`. This results in an
 `O(m*n)` rather than `O((m+n)^3)` algorithm.
 """
-function matrixscale(A::AbstractMatrix; exact::Bool=false)
+function matrixscale(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     Base.require_one_based_indexing(A)
     ax1, ax2 = axes(A, 1), axes(A, 2)
     (s, ns), (t, mt) = _matrixscale(A, ax1, ax2)
@@ -83,13 +88,20 @@ function matrixscale(A::AbstractMatrix; exact::Bool=false)
     if !exact || (all(==(n), ns) && all(==(m), mt))
         z = sum(ns)
         @assert sum(mt) == z "Inconsistent nonzero counts in rows and columns"
-        a = exp.(s ./ ns .- sum(s) / (2z))
-        b = exp.(t ./ mt .- sum(t) / (2z))
+        offsets, offsett = sum(s) / (2z), sum(t) / (2z)
+        divsafe!(s, ns)
+        divsafe!(t, mt)
+        a = exp.(s ./ ns .- offsets)
+        b = exp.(t ./ mt .- offsett)
         return a, b
     end
     p = vcat(ns, -mt)
     W = isnz(A)
-    a12 = exp.(cholesky(Diagonal(vcat(ns, mt)) + odblocks(W) + p * p') \ vcat(s, t))
+    T = promote_type(eltype(s), eltype(t))
+    τ = regularize ? sqrt(eps(T)) : zero(T)
+    divsafe!(s, vec(sum(W; dims=2)); sentinel=-1/τ)
+    divsafe!(t, vec(sum(W; dims=1)); sentinel=-1/τ)
+    a12 = exp.(cholesky(Diagonal(vcat(ns, mt)) + odblocks(W) + p * p' + τ * I) \ vcat(s, t))
     return a12[begin:begin+m-1], a12[m+begin:end]
 end
 
