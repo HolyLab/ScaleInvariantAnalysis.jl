@@ -42,6 +42,9 @@ end
     @test symscale([2.0 1.0; 1.0 3.0]) ≈ symscale([2.0 1.0; 1.0 3.0]; exact=true) ≈ exp.([3 1; 1 3] \ [log(2.0); log(3.0)])
     @test symscale([1.0 -0.2; -0.2 0]; exact=true) ≈ [1, 0.2]
     @test symscale([1.0 0; 0 2]; exact=true) ≈ [1, sqrt(2)]
+    @test symscale([1.0 0; 0 0]) ≈ [1, 0]
+    @test_throws PosDefException symscale([1.0 0; 0 0]; exact=true)
+    @test symscale([1.0 0; 0 0]; exact=true, regularize=true) ≈ [1, 0]
     test_scaleinv(A -> symscale(A; exact=true), [2.0 1.0; 1.0 3.0], 1)
     a, b = matrixscale([2.0 1.0; 1.0 3.0]; exact=true)
     @test a ≈ b ≈ symscale([2.0 1.0; 1.0 3.0]; exact=true)
@@ -52,6 +55,13 @@ end
     test_sumlog(A, a, b)
     a′, b′ = matrixscale(A)
     @test sum(log, a) ≈ sum(log, b) ≈ sum(log, a′) ≈ sum(log, b′)
+    a, b = matrixscale([1.0 0; 0 0])
+    @test a ≈ [1, 0]
+    @test b ≈ [1, 0]
+    @test_throws PosDefException matrixscale([1.0 0; 0 0]; exact=true)
+    a, b = matrixscale([1.0 0; 0 0]; exact=true, regularize=true)
+    @test a ≈ [1, 0]
+    @test b ≈ [1, 0]
 
     @test condscale([1 0; 0 1e-8]) ≈ 1
     A = [1.0 -0.2; -0.2 0]
