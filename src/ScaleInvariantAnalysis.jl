@@ -59,45 +59,69 @@ function symscale(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
-function symscale_barrier(A::AbstractMatrix{T}) where T<:Real
+function symscale_barrier(A::AbstractMatrix{T}; τ=1.0, itermax=5, β=2) where T<:Real
     ax = axes(A, 1)
     axes(A, 2) == ax || throw(ArgumentError("symscale requires a square matrix"))
     W = isnz(A)
     z = log(oneunit(T))
-    logA = [iszero(aij) ? z : log(aij) for aij in A]
+    logA = [iszero(aij) ? z : log(abs(aij)) for aij in A]
+    display(logA)
     sumlogA = vec(sum(logA; dims=2))
     nz = vec(sum(W; dims=2))
-    alpha = solvesm(sumlogA, nz)
+    B = Diagonal(nz) + W
+    α = zeros(T, ax)
+    divsm!(α, sumlogA, nz)
+    @show α
+    display(exp.(α) .* exp.(α)')
+    error("stop")
     s = similar(logA)
-    sbar, nA = zero(eltype(s)), 0
+    means, vars = zero(T), zero(T)
     for j in ax
-        for i in j:last(ax)
-            sij = alpha[i] + alpha[j] - logA[i, j]
+        αj = α[j]
+        for i in ax
+            sij = α[i] + αj - logA[i, j]
             s[i, j] = sij
-            if sij < zero(sij)
-                sbar -= sij    # constraint violation
-                nA += 1
-            end
+            means += sij
+            vars += sij^2
         end
     end
-    iszero(nA) && return exp.(alpha)
-    sbar /= nA
-    δ = solveδ(sbar)
+    display(s)
+    means /= length(logA)
+    @show means   # should be near zero
+    vars = vars / length(logA) - means^2
+    @show sqrt(vars)
+    δ = sqrt(vars) / length(A)   # a small positive value
+    @show δ
     s .= max.(s, δ)
     λ = τ ./ s
-    # TODO: barrier method iterations
+    display(λ)
     ξ = similar(α)
+    Δα = similar(α)
+    Δs = similar(s)
+    iter = 0
     while iter < itermax
+        println("Iteration $iter:")
+        display(s)
+        # display(λ)
         jactλ!(ξ, W, λ)
+        @show ξ sumlogA - ξ - B*α
         divsm!(Δα, sumlogA - ξ - B*α, nz)
+        @show Δα
         solveΔs!(Δs, W, Δα)
-        γ = maxstep(Δs, s)
+        @show Δs
+        γ = maxstep(Δs, s)/2
         α .+= γ * Δα
         s .+= γ * Δs
         τ /= β
-        λ .*= τ ./ s
-        check_convergence(Δs, Δα, sbar)
+        λ .= τ ./ s
+        # check_convergence(Δs, Δα, sbar)
+        iter += 1
     end
+    @show α
+    display(s)
+    display(λ)
+    @show τ
+    return exp.(α)
 end
 
 # Sherman-Morrison division
@@ -118,7 +142,7 @@ function jactλ!(ξ, W, λ)  # ξ = J' * λ
     ax = axes(W, 1)
     for j in ax
         λj = λ[j]
-        for i in j:last(ax)
+        for i in ax
             wij = W[i, j]
             ξ[i] -= wij * λj
             ξ[j] -= wij * λ[i]
@@ -133,13 +157,24 @@ function solveΔs!(Δs, W, Δα)   # Δs = -J * Δα
     ax = axes(W, 1)
     for j in ax
         Δαj = Δα[j]
-        for i in j:last(ax)
+        for i in ax
             wij = W[i, j]
             Δs[i] += wij * Δαj
             Δs[j] += wij * Δα[i]
         end
     end
     return Δs
+end
+
+function maxstep(Δs, s)
+    maxγ = one(eltype(s))
+    for i in eachindex(s, Δs)
+        Δsi = Δs[i]
+        if Δsi < 0
+            maxγ = min(maxγ, -s[i] / Δsi)
+        end
+    end
+    return maxγ
 end
 
 """
