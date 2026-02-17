@@ -84,12 +84,62 @@ function symscale_barrier(A::AbstractMatrix{T}) where T<:Real
     sbar /= nA
     δ = solveδ(sbar)
     s .= max.(s, δ)
+    λ = τ ./ s
     # TODO: barrier method iterations
+    ξ = similar(α)
+    while iter < itermax
+        jactλ!(ξ, W, λ)
+        divsm!(Δα, sumlogA - ξ - B*α, nz)
+        solveΔs!(Δs, W, Δα)
+        γ = maxstep(Δs, s)
+        α .+= γ * Δα
+        s .+= γ * Δs
+        τ /= β
+        λ .*= τ ./ s
+        check_convergence(Δs, Δα, sbar)
+    end
 end
 
-function solvesm(sumlogA::AbstractVector{T}, nz::AbstractVector{Int}) where T<:Real
-    offset = sum(sumlogA) / (2 * sum(nz))
-    return [ni == 0 ? typemin(T) : ai / ni - offset for (ai, ni) in zip(sumlogA, nz)]
+# Sherman-Morrison division
+function divsm!(result::AbstractVector{T}, v::AbstractVector, nz::AbstractVector{Int}) where T<:Real
+    sumnz = sum(nz)
+    @assert sumnz > 0 "Cannot divide by zero: all rows are zero"
+    offset = sum(v) / (2 * sumnz)
+    for i in eachindex(result, v, nz)
+        nzi = nz[i]
+        result[i] = nzi == 0 ? typemin(T) : v[i] / nzi - offset
+    end
+    return result
+end
+
+function jactλ!(ξ, W, λ)  # ξ = J' * λ
+    @assert issymmetric(W)  # will generalize later
+    fill!(ξ, zero(eltype(ξ)))
+    ax = axes(W, 1)
+    for j in ax
+        λj = λ[j]
+        for i in j:last(ax)
+            wij = W[i, j]
+            ξ[i] -= wij * λj
+            ξ[j] -= wij * λ[i]
+        end
+    end
+    return ξ
+end
+
+function solveΔs!(Δs, W, Δα)   # Δs = -J * Δα
+    @assert issymmetric(W)  # will generalize later
+    fill!(Δs, zero(eltype(Δs)))
+    ax = axes(W, 1)
+    for j in ax
+        Δαj = Δα[j]
+        for i in j:last(ax)
+            wij = W[i, j]
+            Δs[i] += wij * Δαj
+            Δs[j] += wij * Δα[i]
+        end
+    end
+    return Δs
 end
 
 """
