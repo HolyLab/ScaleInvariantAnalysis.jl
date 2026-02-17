@@ -59,6 +59,39 @@ function symscale(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
+function symscale_barrier(A::AbstractMatrix{T}) where T<:Real
+    ax = axes(A, 1)
+    axes(A, 2) == ax || throw(ArgumentError("symscale requires a square matrix"))
+    W = isnz(A)
+    z = log(oneunit(T))
+    logA = [iszero(aij) ? z : log(aij) for aij in A]
+    sumlogA = vec(sum(logA; dims=2))
+    nz = vec(sum(W; dims=2))
+    alpha = solvesm(sumlogA, nz)
+    s = similar(logA)
+    sbar, nA = zero(eltype(s)), 0
+    for j in ax
+        for i in j:last(ax)
+            sij = alpha[i] + alpha[j] - logA[i, j]
+            s[i, j] = sij
+            if sij < zero(sij)
+                sbar -= sij    # constraint violation
+                nA += 1
+            end
+        end
+    end
+    iszero(nA) && return exp.(alpha)
+    sbar /= nA
+    δ = solveδ(sbar)
+    s .= max.(s, δ)
+    # TODO: barrier method iterations
+end
+
+function solvesm(sumlogA::AbstractVector{T}, nz::AbstractVector{Int}) where T<:Real
+    offset = sum(sumlogA) / (2 * sum(nz))
+    return [ni == 0 ? typemin(T) : ai / ni - offset for (ai, ni) in zip(sumlogA, nz)]
+end
+
 """
     a, b = matrixscale(A; exact=false, regularize=false)
 
