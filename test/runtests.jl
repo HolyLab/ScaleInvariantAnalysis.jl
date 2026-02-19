@@ -1,5 +1,7 @@
 using ScaleInvariantAnalysis
+const SIA = ScaleInvariantAnalysis
 using LinearAlgebra
+using PDMats
 using Test
 
 function test_scaleinv(f, A::AbstractMatrix, p::Int; iter=10, rtol=sqrt(eps(float(eltype(A)))))
@@ -39,27 +41,46 @@ function test_sumlog(A, a, b; rtol=1e-6)
 end
 
 @testset "ScaleInvariantAnalysis.jl" begin
-    @test symscale([2.0 1.0; 1.0 3.0]) ≈ symscale([2.0 1.0; 1.0 3.0]; exact=true) ≈ exp.([3 1; 1 3] \ [log(2.0); log(3.0)])
-    @test symscale([1.0 -0.2; -0.2 0]; exact=true) ≈ [1, 0.2]
-    @test symscale([1.0 0; 0 2]; exact=true) ≈ [1, sqrt(2)]
-    @test symscale([1.0 0; 0 0]) ≈ [1, 0]
-    @test_throws PosDefException symscale([1.0 0; 0 0]; exact=true)
-    @test symscale([1.0 0; 0 0]; exact=true, regularize=true) ≈ [1, 0]
-    test_scaleinv(A -> symscale(A; exact=true), [2.0 1.0; 1.0 3.0], 1)
-    a, b = matrixscale([2.0 1.0; 1.0 3.0]; exact=true)
-    @test a ≈ b ≈ symscale([2.0 1.0; 1.0 3.0]; exact=true)
-    a′, b′ = matrixscale([2.0 1.0; 1.0 3.0])
+    @testset "linalg" begin
+        A = [1.0 0.1; 0.1 2.3]
+        u = [0.7, -0.33]
+        v = [0.5, 0.9]
+        S = SIA.ShermanMorrisonMatrix(PDMat(A), u, v)
+        Sc = A + u * v'
+        @test S ≈ Sc
+        v = randn(2)
+        x = Sc \ v
+        @test S \ v ≈ x
+        @test S * x ≈ v
+        xc = similar(x)
+        ldiv!(xc, S, v)
+        @test xc ≈ x
+        vc = similar(v)
+        mul!(vc, S, x)
+        @test vc ≈ v
+    end
+
+    @test symcover([2.0 1.0; 1.0 3.0]) ≈ symcover([2.0 1.0; 1.0 3.0]; exact=true) ≈ exp.([3 1; 1 3] \ [log(2.0); log(3.0)])
+    @test symcover([1.0 -0.2; -0.2 0]; exact=true) ≈ [1, 0.2]
+    @test symcover([1.0 0; 0 2]; exact=true) ≈ [1, sqrt(2)]
+    @test symcover([1.0 0; 0 0]) ≈ [1, 0]
+    @test_throws PosDefException symcover([1.0 0; 0 0]; exact=true)
+    @test symcover([1.0 0; 0 0]; exact=true, regularize=true) ≈ [1, 0]
+    test_scaleinv(A -> symcover(A; exact=true), [2.0 1.0; 1.0 3.0], 1)
+    a, b = cover([2.0 1.0; 1.0 3.0]; exact=true)
+    @test a ≈ b ≈ symcover([2.0 1.0; 1.0 3.0]; exact=true)
+    a′, b′ = cover([2.0 1.0; 1.0 3.0])
     @test a′ ≈ a && b′ ≈ b
     A = [0.0 1.0; -2.0 0.0]
-    a, b = matrixscale(A; exact=true)
+    a, b = cover(A; exact=true)
     test_sumlog(A, a, b)
-    a′, b′ = matrixscale(A)
+    a′, b′ = cover(A)
     @test sum(log, a) ≈ sum(log, b) ≈ sum(log, a′) ≈ sum(log, b′)
-    a, b = matrixscale([1.0 0; 0 0])
+    a, b = cover([1.0 0; 0 0])
     @test a ≈ [1, 0]
     @test b ≈ [1, 0]
-    @test_throws PosDefException matrixscale([1.0 0; 0 0]; exact=true)
-    a, b = matrixscale([1.0 0; 0 0]; exact=true, regularize=true)
+    @test_throws PosDefException cover([1.0 0; 0 0]; exact=true)
+    a, b = cover([1.0 0; 0 0]; exact=true, regularize=true)
     @test a ≈ [1, 0]
     @test b ≈ [1, 0]
 

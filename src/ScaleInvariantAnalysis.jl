@@ -2,9 +2,14 @@ module ScaleInvariantAnalysis
 
 using LinearAlgebra
 using SparseArrays
+using PrimalDualLinearAlgebra
+using LinearOperators
+using Krylov
+using PDMats
 
-export condscale, divmag, dotabs, matrixscale, symscale
+export condscale, divmag, dotabs, cover, symcover
 
+include("linalg.jl")
 include("utils.jl")
 
 """
@@ -24,11 +29,11 @@ end
 
 
 """
-    a = symscale(A; exact=false, regularize=false)
+    a = symcover(A; exact=false, regularize=false)
 
-Given a matrix `A` assumed to be symmetric, return a vector `a` representing the
-"scale of each axis," so that `|A[i,j]| ~ a[i] * a[j]` for all `i, j`. `a[i]` is
-nonnegative, and is zero only if `A[i, j] = 0` for all `j`.
+Given a matrix `A` assumed to be symmetric, return a vector `a` serving as a
+ symmetric matrix cover, so that `|A[i,j]| <= a[i] * a[j]` for all `i, j`. `a[i]`
+is nonnegative, and is zero only if `A[i, j] = 0` for all `j`.
 
 With `exact=true`, `a` minimizes the objective function
 
@@ -38,14 +43,15 @@ and is therefore covariant under changes of scale but not general linear
 transformations.
 
 With `exact=false`, the pattern of nonzeros in `A` is approximated as `u * u'`,
-where `sum(u) * u[i] = nz[i]` is the number of nonzero in row `i`. This results in an
-`O(n^2)` rather than `O(n^3)` algorithm. `regularize=true` adds a small offset to the
-diagonal (relevant only when `exact=true`), which handles all-zero rows of `A`.
+where `sum(u) * u[i] = nz[i]` is the number of nonzero in row `i`. This results
+in an `O(n^2)` rather than `O(n^3)` algorithm. `regularize=true` adds a small
+offset to the diagonal (relevant only when `exact=true`), which handles all-zero
+rows of `A`.
 """
-function symscale(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
+function symcover(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     ax = axes(A, 1)
-    axes(A, 2) == ax || throw(ArgumentError("symscale requires a square matrix"))
-    sumlogA, nz = _symscale(A, ax)
+    axes(A, 2) == ax || throw(ArgumentError("symcover requires a square matrix"))
+    sumlogA, nz = _symcover(A, ax)
     n = length(ax)
     if !exact || all(==(n), nz)
         # Sherman-Morrison formula for efficiency
@@ -59,56 +65,66 @@ function symscale(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
-function symscale_barrier(A::AbstractMatrix{T}; τ=1.0, itermax=5, β=2) where T<:Real
+data = Ref{Any}()
+
+function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, itermax=5, β=2)
+    @assert issymmetric(A)  # will generalize later
     ax = axes(A, 1)
-    axes(A, 2) == ax || throw(ArgumentError("symscale requires a square matrix"))
+    n = length(ax)
     W = isnz(A)
-    z = log(oneunit(T))
+    z = log(oneunit(eltype(A)))
+    T = typeof(z)
     logA = [iszero(aij) ? z : log(abs(aij)) for aij in A]
-    display(logA)
-    sumlogA = vec(sum(logA; dims=2))
     nz = vec(sum(W; dims=2))
-    B = Diagonal(nz) + W
-    α = zeros(T, ax)
-    divsm!(α, sumlogA, nz)
+    B = if !exact || all(==(n), nz)
+        u = nz / sqrt(sum(nz))
+        ShermanMorrisonMatrix{T}(Diagonal(nz), u, u)
+    else
+        Diagonal(nz) + W
+    end
+    @show eigvals(Matrix(B))
+    data[] = deepcopy(B)
+
+    sumlogA = vec(sum(logA; dims=2))
+    α = B \ sumlogA
     @show α
     display(exp.(α) .* exp.(α)')
-    error("stop")
-    s = similar(logA)
-    means, vars = zero(T), zero(T)
-    for j in ax
-        αj = α[j]
-        for i in ax
-            sij = α[i] + αj - logA[i, j]
-            s[i, j] = sij
-            means += sij
-            vars += sij^2
-        end
-    end
-    display(s)
-    means /= length(logA)
-    @show means   # should be near zero
-    vars = vars / length(logA) - means^2
-    @show sqrt(vars)
-    δ = sqrt(vars) / length(A)   # a small positive value
-    @show δ
+    r = residual(logA, α, W)
+    N = length(r)
+    s = -r
+    means = sum(s) / N
+    vars = sum(s.^2) / N - means^2
+    δ = sqrt(vars) / N   # a small positive value
     s .= max.(s, δ)
+    @show s
     λ = τ ./ s
-    display(λ)
-    ξ = similar(α)
-    Δα = similar(α)
-    Δs = similar(s)
+    xs = XS(α, s)
+    λν = LN(λ, T[])
+    H = HessXS(B, xs, λν)
+    # Hinv = HessXS(ShermanMorrisonInverse(B), xs.s ./ λν.λ)  #
+    J = JacLNXS(jopsym(A, N), zeros(T, 0, length(α)))
+    gxs = TopBottomVector(J.Ji'*r, τ ./ s)
+    cviol = TopBottomVector(r + s, T[])
+    Δxs0 = zero(TopBottomVector(xs))
+    ws = Krylov.TrimrWorkspace(KrylovConstructor(Δxs0, TopBottomVector(λν)))
+    @show size(gxs) size(cviol) size(Δxs0) size(λν) size(xs)
     iter = 0
     while iter < itermax
         println("Iteration $iter:")
-        display(s)
-        # display(λ)
-        jactλ!(ξ, W, λ)
-        @show ξ sumlogA - ξ - B*α
-        divsm!(Δα, sumlogA - ξ - B*α, nz)
-        @show Δα
-        solveΔs!(Δs, W, Δα)
-        @show Δs
+        trimr!(ws, J', -gxs, -cviol #=, Δxs0, λν=#; ν=0.0, τ=1.0, M=H, ldiv=true, itmax=20, verbose=1)
+        @show ws.stats
+        @show ws.x
+        @show ws.y
+        # S = [AbstractMatrix(H) AbstractMatrix(J)'; AbstractMatrix(J) zeros(T, size(J, 1), size(J, 1))]
+        # @show S \ vcat(-gxs, -cviol)
+        # @show minres(S, vcat(-gxs, -cviol); verbose=1)
+        error("stop")
+        # jactλ!(ξ, W, λ)
+        # @show ξ sumlogA - ξ - B*α
+        # divsm!(Δα, sumlogA - ξ - B*α, nz)
+        # @show Δα
+        # solveΔs!(Δs, W, Δα)
+        # @show Δs
         γ = maxstep(Δs, s)/2
         α .+= γ * Δα
         s .+= γ * Δs
@@ -116,6 +132,7 @@ function symscale_barrier(A::AbstractMatrix{T}; τ=1.0, itermax=5, β=2) where T
         λ .= τ ./ s
         # check_convergence(Δs, Δα, sbar)
         iter += 1
+        residual!(r, logA, α, W)
     end
     @show α
     display(s)
@@ -123,6 +140,93 @@ function symscale_barrier(A::AbstractMatrix{T}; τ=1.0, itermax=5, β=2) where T
     @show τ
     return exp.(α)
 end
+
+function symnz(W)
+    ax = axes(W, 1)
+    k = 0
+    for j in ax
+        for i in j:last(ax)
+            W[i, j] && (k += 1)
+        end
+    end
+    return k
+end
+
+function residual!(r, logA, α::AbstractVector, W::AbstractMatrix{Bool})
+    ax = axes(logA, 1)
+    @assert axes(logA, 2) == ax
+    k = firstindex(r) - 1
+    for j in ax
+        for i in j:last(ax)
+            W[i, j] || continue
+            r[k += 1] = logA[i, j] - α[i] - α[j]
+        end
+    end
+    @assert k == lastindex(r)
+    return r
+end
+function residual!(r, logA, α::AbstractVector, β::AbstractVector, W::AbstractMatrix{Bool})
+    k = firstindex(r) - 1
+    for j in axes(logA, 2)
+        βj = β[j]
+        for i in axes(logA, 1)
+            W[i, j] || continue
+            r[k += 1] = logA[i, j] - α[i] - βj
+        end
+    end
+    @assert k == lastindex(r)
+    return r
+end
+
+function residual(logA, α::AbstractVector, W::AbstractMatrix{Bool}, N::Int=symnz(W))
+    r = Vector{eltype(logA)}(undef, N)
+    return residual!(r, logA, α, W)
+end
+residual(logA, α::AbstractVector, β::AbstractVector, W::AbstractMatrix{Bool}, N::Int=sum(W)) = residual!(Vector{eltype(logA)}(undef, N), logA, α, β, W)
+
+function jopsym(A, N)
+    ax = axes(A, 1)
+    n = length(ax)
+    T = typeof(log(oneunit(eltype(A))))
+    return LinearOperator(T, N, n, false, false,
+        function(out, v, α, β)    # mul!(out, J, v, α, β)
+            if iszero(β)
+                fill!(out, zero(T))
+            elseif β != 1
+                out .*= β
+            end
+            k = 0
+            for j in ax
+                for i in j:last(ax)
+                    iszero(A[i, j]) && continue
+                    out[k += 1] -= v[i] + v[j]
+                end
+            end
+            @assert k == length(out)
+            return out
+        end,
+        function(out, v, α, β)    # mul!(out, J', v, α, β)
+            if iszero(β)
+                fill!(out, zero(T))
+            elseif β != 1
+                out .*= β
+            end
+            k = 0
+            for j in ax
+                for i in j:last(ax)
+                    iszero(A[i, j]) && continue
+                    k += 1
+                    out[i] -= v[k]
+                    out[j] -= v[k]
+                end
+            end
+            @assert k == length(v)
+            return out
+        end)
+end
+
+
+
 
 # Sherman-Morrison division
 function divsm!(result::AbstractVector{T}, v::AbstractVector, nz::AbstractVector{Int}) where T<:Real
@@ -178,7 +282,7 @@ function maxstep(Δs, s)
 end
 
 """
-    a, b = matrixscale(A; exact=false, regularize=false)
+    a, b = cover(A; exact=false, regularize=false)
 
 Given a matrix `A`, return vectors `a` and `b` representing the "scale of each
 axis," so that `|A[i,j]| ~ a[i] * b[j]` for all `i, j`. `a[i]` and `b[j]` are
@@ -198,10 +302,10 @@ With `exact=false`, the pattern of nonzeros in `A` is approximated as `u * v'`,
 where `sum(u) * v[j] = mA[j]` and `sum(v) * u[i] = nA[i]`. This results in an
 `O(m*n)` rather than `O((m+n)^3)` algorithm.
 """
-function matrixscale(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
+function cover(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     Base.require_one_based_indexing(A)
     ax1, ax2 = axes(A, 1), axes(A, 2)
-    (s, ns), (t, mt) = _matrixscale(A, ax1, ax2)
+    (s, ns), (t, mt) = _cover(A, ax1, ax2)
     m, n = length(ax1), length(ax2)
     if !exact || (all(==(n), ns) && all(==(m), mt))
         z = sum(ns)
@@ -233,12 +337,12 @@ Given a symmetric matrix `A`, return the condition number of the scaled matrix
 
     A ./ (a .* a')
 
-where `a = symscale(A; exact)`.
+where `a = symcover(A; exact)`.
 
 This is a scale-invariant estimate of the condition number of `A`.
 """
 function condscale(A; exact=true)
-    a = symscale(A; exact)
+    a = symcover(A; exact)
     return cond(A ./ (a .* a'))
 end
 
@@ -250,13 +354,13 @@ where `mag` is a naive estimate of the magnitude of `sum(abs.(x .* a))`. `a` and
 `mag` are scale-covariant in circumstances where `A \\ b` is contravariant. With
 `cond=false`, the estimate is based only on the magnitudes of the numbers in `A`
 and `b`, and does not account for the conditioning of `A` or cancellation in the
-solution process. Any `kwargs` are passed to [`symscale`](@ref).
+solution process. Any `kwargs` are passed to [`symcover`](@ref).
 
 This can be used to form scale-invariant estimates of roundoff errors in
 computations involving `A`, `b`, and `x`.
 """
 function divmag(A, b; cond::Bool=false, exact=cond)
-    a = symscale(A; exact)
+    a = symcover(A; exact)
     κ = cond ? LinearAlgebra.cond(A ./ (a .* a')) : 1
     return a, κ * sum(abs ∘ splat(ratio_nz), zip(b, a))
 end

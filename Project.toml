@@ -1,10 +1,14 @@
 name = "ScaleInvariantAnalysis"
 uuid = "727e6139-ff52-4636-a344-ed1d23e73ffc"
-version = "1.0.0-DEV"
 authors = ["Tim Holy <tim.holy@gmail.com> and contributors"]
+version = "1.0.0-DEV"
 
 [deps]
+Krylov = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+LinearOperators = "5c8ed15e-5a4c-59e4-a42b-c7e8811fb125"
+PDMats = "90014a1f-27ba-587c-ab20-58faa44d9150"
+PrimalDualLinearAlgebra = "398bc1fc-7a5b-4dd0-a759-e1c0ad42bb90"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [compat]

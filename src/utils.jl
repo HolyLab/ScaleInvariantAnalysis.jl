@@ -1,4 +1,4 @@
-function _symscale(A, ax)
+function _symcover(A, ax)
     sumlogA, nz = fill!(similar(A, Float64, ax), 0), fill!(similar(A, Int, ax), 0)
     for j in ax
         for i in j:last(ax)
@@ -15,7 +15,7 @@ function _symscale(A, ax)
     return sumlogA, nz
 end
 
-function _matrixscale(A, ax1, ax2)
+function _cover(A, ax1, ax2)
     sumlogA1, nz1 = fill!(similar(A, Float64, ax1), 0), fill!(similar(A, Int, ax1), 0)
     sumlogA2, nz2 = fill!(similar(A, Float64, ax2), 0), fill!(similar(A, Int, ax2), 0)
     for j in ax2
