@@ -2,6 +2,8 @@ using ScaleInvariantAnalysis
 const SIA = ScaleInvariantAnalysis
 using LinearAlgebra
 using PDMats
+using DifferentiationInterface
+using ForwardDiff
 using Test
 
 function test_scaleinv(f, A::AbstractMatrix, p::Int; iter=10, rtol=sqrt(eps(float(eltype(A)))))
@@ -41,6 +43,8 @@ function test_sumlog(A, a, b; rtol=1e-6)
 end
 
 @testset "ScaleInvariantAnalysis.jl" begin
+    backend = AutoForwardDiff()
+
     @testset "linalg" begin
         A = [1.0 0.1; 0.1 2.3]
         u = [0.7, -0.33]
@@ -59,6 +63,20 @@ end
         mul!(vc, S, x)
         @test vc ≈ v
     end
+
+    @testset "objective and gradient" begin
+        ϵ = 1e-8
+        A = [1.0 ϵ 0; ϵ 0.2 5; 0 5 0]
+        W = .!iszero.(A)
+        logA = log.(abs.(A))
+        α = randn(3)
+        obj(α) = sum(abs2, SIA.residual(logA, α, W)) / 2
+        J = SIA.jopsym(A, SIA.symnz(W))
+        r = SIA.residual(logA, α, W)
+        @test gradient(obj, backend, α) ≈ J' * r
+    end
+
+    error("stop")
 
     @test symcover([2.0 1.0; 1.0 3.0]) ≈ symcover([2.0 1.0; 1.0 3.0]; exact=true) ≈ exp.([3 1; 1 3] \ [log(2.0); log(3.0)])
     @test symcover([1.0 -0.2; -0.2 0]; exact=true) ≈ [1, 0.2]

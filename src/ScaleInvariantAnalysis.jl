@@ -65,9 +65,7 @@ function symcover(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
-data = Ref{Any}()
-
-function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, itermax=5, β=2)
+function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfrac = 1//8, itermax=20, btmax=8)
     @assert issymmetric(A)  # will generalize later
     ax = axes(A, 1)
     n = length(ax)
@@ -82,12 +80,9 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, itermax=
     else
         Diagonal(nz) + W
     end
-    @show eigvals(Matrix(B))
-    data[] = deepcopy(B)
 
     sumlogA = vec(sum(logA; dims=2))
     α = B \ sumlogA
-    @show α
     display(exp.(α) .* exp.(α)')
     r = residual(logA, α, W)
     N = length(r)
@@ -96,47 +91,86 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, itermax=
     vars = sum(s.^2) / N - means^2
     δ = sqrt(vars) / N   # a small positive value
     s .= max.(s, δ)
-    @show s
     λ = τ ./ s
     xs = XS(α, s)
     λν = LN(λ, T[])
     H = HessXS(B, xs, λν)
     # Hinv = HessXS(ShermanMorrisonInverse(B), xs.s ./ λν.λ)  #
     J = JacLNXS(jopsym(A, N), zeros(T, 0, length(α)))
-    gxs = TopBottomVector(J.Ji'*r, τ ./ s)
+    gxs = TopBottomVector(J.Ji'*r, -τ ./ s)
     cviol = TopBottomVector(r + s, T[])
     Δxs0 = zero(TopBottomVector(xs))
-    ws = Krylov.TrimrWorkspace(KrylovConstructor(Δxs0, TopBottomVector(λν)))
-    @show size(gxs) size(cviol) size(Δxs0) size(λν) size(xs)
+    ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
+    wslsqr = LsqrWorkspace(KrylovConstructor(gxs, cviol))
+    wslnlq = LnlqWorkspace(KrylovConstructor(cviol, gxs))
+    totalviol = sum(abs2, cviol) + sum(abs2, gxs + J' * λν)
     iter = 0
     while iter < itermax
         println("Iteration $iter:")
-        trimr!(ws, J', -gxs, -cviol #=, Δxs0, λν=#; ν=0.0, τ=1.0, M=H, ldiv=true, itmax=20, verbose=1)
-        @show ws.stats
-        @show ws.x
-        @show ws.y
-        # S = [AbstractMatrix(H) AbstractMatrix(J)'; AbstractMatrix(J) zeros(T, size(J, 1), size(J, 1))]
-        # @show S \ vcat(-gxs, -cviol)
-        # @show minres(S, vcat(-gxs, -cviol); verbose=1)
+        # @show H.λsratio
+        trimr!(ws, J', -gxs, -cviol#=, Δxs0, λν=#; ν=0.0, τ=1.0, M=H, ldiv=true) #itmax=2*(length(gxs) + length(cviol)))
+        @show ws.stats.solved
+        lsqr!(wslsqr, J', -gxs; M=H, ldiv=true)
+        lnlq!(wslnlq, J, cviol; N=H, ldiv=true) #, λ=sqrt(eps(eltype(g))))
+        @show wslsqr.stats.solved wslnlq.stats.solved
+        λνpar = wslsqr.x
+        Δxspar = - (H \ (gxs + J' * λνpar))
+        Δxsperp, λνperp = -wslnlq.x, wslnlq.y
+        @show ws.x Δxspar + Δxsperp
+        @show ws.y λνpar + λνperp
         error("stop")
+        # S = [AbstractMatrix(H) AbstractMatrix(J)'; AbstractMatrix(J) zeros(T, size(J, 1), size(J, 1))]
+        # soldirect = S \ vcat(-gxs, -cviol)
+        # @show minres(S, vcat(-gxs, -cviol); verbose=1)
         # jactλ!(ξ, W, λ)
         # @show ξ sumlogA - ξ - B*α
         # divsm!(Δα, sumlogA - ξ - B*α, nz)
         # @show Δα
         # solveΔs!(Δs, W, Δα)
         # @show Δs
-        γ = maxstep(Δs, s)/2
-        α .+= γ * Δα
-        s .+= γ * Δs
-        τ /= β
-        λ .= τ ./ s
-        # check_convergence(Δs, Δα, sbar)
+        Δαs, λνnew = ws.x, ws.y
+        # @show Δαs soldirect[1:length(Δαs)] λνnew soldirect[length(Δαs)+1:end]
+        # copyto!(Δαs, soldirect[1:length(Δαs)])
+        # copyto!(λνnew, soldirect[length(Δαs)+1:end])
+        # @show H * Δαs + J' * λνnew + gxs
+        # @show J * Δαs + cviol
+        # error("stop")
+        Δα, Δs = top(Δαs), bottom(Δαs)
+        λnew = top(λνnew)
+        Δλ = λnew - λ
+        γ, γλ = maxstep(Δs, s), maxstep(Δλ, λ)
+        @show sum(abs2, gxs + J' * λν) sum(abs2, cviol)
+        # @show Δα Δs λnew γ γλ
+        iterbt = 0
+        local αnew, snew, λnew
+        while iterbt < btmax
+            αnew = α + γ * Δα
+            snew = s + γ * Δs
+            λnew = λ + γλ * Δλ
+            residual!(r, logA, αnew, W)
+            mul!(top(gxs), J.Ji', r)
+            bottom(gxs) .= -τ ./ snew
+            top(cviol) .= r + snew
+            totalviolnew = sum(abs2, cviol) + sum(abs2, gxs + J' * λνnew)
+            totalviolnew < totalviol && break
+            γ /= 2
+            γλ /= 2
+            iterbt += 1
+        end
+        @show iterbt
+        iterbt == btmax && break
+        copyto!(α, αnew)
+        copyto!(s, snew)
+        copyto!(λ, λnew)
+        τ *= sqrt(1 - min(γ, γλ, 1 - τminfrac^2))
+        # @show α s λ τ
         iter += 1
-        residual!(r, logA, α, W)
+        bottom(gxs) .= -τ ./ s
+        H.λsratio .= λ ./ s
+        totalviolnew = sum(abs2, cviol) + sum(abs2, gxs + J' * λν)
+        # totalviolnew > totalviol && break
+        totalviol = totalviolnew
     end
-    @show α
-    display(s)
-    display(λ)
     @show τ
     return exp.(α)
 end
@@ -179,10 +213,13 @@ function residual!(r, logA, α::AbstractVector, β::AbstractVector, W::AbstractM
 end
 
 function residual(logA, α::AbstractVector, W::AbstractMatrix{Bool}, N::Int=symnz(W))
-    r = Vector{eltype(logA)}(undef, N)
-    return residual!(r, logA, α, W)
+    T = promote_type(eltype(logA), eltype(α))
+    return residual!(Vector{T}(undef, N), logA, α, W)
 end
-residual(logA, α::AbstractVector, β::AbstractVector, W::AbstractMatrix{Bool}, N::Int=sum(W)) = residual!(Vector{eltype(logA)}(undef, N), logA, α, β, W)
+function residual(logA, α::AbstractVector, β::AbstractVector, W::AbstractMatrix{Bool}, N::Int=sum(W))
+    T = promote_type(eltype(logA), eltype(α), eltype(β))
+    return residual!(Vector{T}(undef, N), logA, α, β, W)
+end
 
 function jopsym(A, N)
     ax = axes(A, 1)
@@ -270,15 +307,14 @@ function solveΔs!(Δs, W, Δα)   # Δs = -J * Δα
     return Δs
 end
 
-function maxstep(Δs, s)
-    maxγ = one(eltype(s))
+function maxstep(Δs, s, steplen=one(eltype(Δs)); η=1//16)
     for i in eachindex(s, Δs)
         Δsi = Δs[i]
         if Δsi < 0
-            maxγ = min(maxγ, -s[i] / Δsi)
+            steplen = min(steplen, -(1 - η) * s[i] / Δsi)
         end
     end
-    return maxγ
+    return steplen
 end
 
 """
