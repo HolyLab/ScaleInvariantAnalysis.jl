@@ -65,7 +65,7 @@ function symcover(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
-function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfrac = 1//8, itermax=20, btmax=8)
+function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfrac = 1//8, rtol=sqrt(eps(float(eltype(A)))), atol=0, itermax=20, btmax=5)
     @assert issymmetric(A)  # will generalize later
     ax = axes(A, 1)
     n = length(ax)
@@ -85,6 +85,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     α = B \ sumlogA
     display(exp.(α) .* exp.(α)')
     r = residual(logA, α, W)
+    rtmp = similar(r)
     N = length(r)
     s = -r
     means = sum(s) / N
@@ -99,77 +100,81 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     J = JacLNXS(jopsym(A, N), zeros(T, 0, length(α)))
     gxs = TopBottomVector(J.Ji'*r, -τ ./ s)
     cviol = TopBottomVector(r + s, T[])
-    Δxs0 = zero(TopBottomVector(xs))
-    ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
+    # Δxs0 = zero(TopBottomVector(xs))
+    # ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
     wslsqr = LsqrWorkspace(KrylovConstructor(gxs, cviol))
     wslnlq = LnlqWorkspace(KrylovConstructor(cviol, gxs))
     totalviol = sum(abs2, cviol) + sum(abs2, gxs + J' * λν)
     iter = 0
     while iter < itermax
-        println("Iteration $iter:")
+        println("\nIteration $iter:")
         # @show H.λsratio
-        trimr!(ws, J', -gxs, -cviol#=, Δxs0, λν=#; ν=0.0, τ=1.0, M=H, ldiv=true) #itmax=2*(length(gxs) + length(cviol)))
-        @show ws.stats.solved
+        # trimr!(ws, J', -gxs, -cviol#=, Δxs0, λν=#; ν=0.0, τ=1.0, M=H, ldiv=true) #itmax=2*(length(gxs) + length(cviol)))
+        # @show ws.stats.solved
+        # Solve for the Newton step, separating parallel and perpendicular components to the constraint manifold
         lsqr!(wslsqr, J', -gxs; M=H, ldiv=true)
         lnlq!(wslnlq, J, cviol; N=H, ldiv=true) #, λ=sqrt(eps(eltype(g))))
         @show wslsqr.stats.solved wslnlq.stats.solved
         λνpar = wslsqr.x
         Δxspar = - (H \ (gxs + J' * λνpar))
         Δxsperp, λνperp = -wslnlq.x, wslnlq.y
-        @show ws.x Δxspar + Δxsperp
-        @show ws.y λνpar + λνperp
-        error("stop")
-        # S = [AbstractMatrix(H) AbstractMatrix(J)'; AbstractMatrix(J) zeros(T, size(J, 1), size(J, 1))]
-        # soldirect = S \ vcat(-gxs, -cviol)
-        # @show minres(S, vcat(-gxs, -cviol); verbose=1)
-        # jactλ!(ξ, W, λ)
-        # @show ξ sumlogA - ξ - B*α
-        # divsm!(Δα, sumlogA - ξ - B*α, nz)
-        # @show Δα
-        # solveΔs!(Δs, W, Δα)
-        # @show Δs
-        Δαs, λνnew = ws.x, ws.y
-        # @show Δαs soldirect[1:length(Δαs)] λνnew soldirect[length(Δαs)+1:end]
-        # copyto!(Δαs, soldirect[1:length(Δαs)])
-        # copyto!(λνnew, soldirect[length(Δαs)+1:end])
-        # @show H * Δαs + J' * λνnew + gxs
-        # @show J * Δαs + cviol
-        # error("stop")
-        Δα, Δs = top(Δαs), bottom(Δαs)
-        λnew = top(λνnew)
-        Δλ = λnew - λ
-        γ, γλ = maxstep(Δs, s), maxstep(Δλ, λ)
-        @show sum(abs2, gxs + J' * λν) sum(abs2, cviol)
-        # @show Δα Δs λnew γ γλ
+        # Compute convergence criteria
+        δpar = abs(dot(gxs + J' * λνpar, Δxspar))
+        δperp = dotabs(cviol, λνperp)
+        objval = sum(abs2, r) / 2
+        max(δpar, δperp) <= rtol * objval + atol && break
+        # Determine step lengths that decrease the merit functions
+        meritpar0 = objval - τ * sum(log, s) + dot(λνpar, cviol)
+        # @show objval τ * sum(log, s) dot(λνpar, cviol) dot(λνpar, r + s)
+        γpar = maxstep(bottom(Δxspar), s)
         iterbt = 0
-        local αnew, snew, λnew
+        @show γpar meritpar0
         while iterbt < btmax
-            αnew = α + γ * Δα
-            snew = s + γ * Δs
-            λnew = λ + γλ * Δλ
-            residual!(r, logA, αnew, W)
-            mul!(top(gxs), J.Ji', r)
-            bottom(gxs) .= -τ ./ snew
-            top(cviol) .= r + snew
-            totalviolnew = sum(abs2, cviol) + sum(abs2, gxs + J' * λνnew)
-            totalviolnew < totalviol && break
-            γ /= 2
-            γλ /= 2
+            xstmp = xs + γpar * Δxspar
+            residual!(rtmp, logA, top(xstmp), W)
+            meritparγ = sum(abs2, rtmp) / 2 - τ * sum(log, bottom(xstmp)) + dot(λνpar, rtmp + bottom(xstmp))
+            @show meritparγ
+            # @show meritparγ sum(abs2, rtmp) / 2 τ * sum(log, bottom(xstmp)) dot(λνpar, rtmp + bottom(xstmp))
+            meritparγ < meritpar0 && break
+            iterbt += 1
+            γpar /= (1 + iterbt)
+        end
+        iterbt == btmax && (γpar = zero(γpar))
+        meritperp0 = dotabs(cviol, λνperp)
+        γperp = maxstep(bottom(Δxsperp), s + γpar * bottom(Δxspar))
+        @show γperp meritperp0
+        iterbt = 0
+        while iterbt < btmax
+            xstmp = xs + (γpar * Δxspar + γperp * Δxsperp)
+            residual!(rtmp, logA, top(xstmp), W)
+            meritperpγ = dotabs(rtmp + bottom(xstmp), λνperp)
+            @show meritperpγ
+            meritperpγ < meritperp0 && break
             iterbt += 1
         end
-        @show iterbt
-        iterbt == btmax && break
-        copyto!(α, αnew)
-        copyto!(s, snew)
-        copyto!(λ, λnew)
-        τ *= sqrt(1 - min(γ, γλ, 1 - τminfrac^2))
+        iterbt == btmax && (γperp = zero(γperp))
+        # Compute the maximum step length that maintains positivity of `s` and `λ`
+        # While this was checked individually for the parallel and perpendicular steps, we need to check it again for the combined step
+        λnew = (1 - γpar) * top(λν) + (γpar * top(λνpar) + γperp * top(λνperp))
+        Δλ = λnew - λ
+        γ = maxstep(Δλ, λ, maxstep(γpar*bottom(Δxspar) + γperp*bottom(Δxsperp), s))
+        @show γ γpar γperp
+        γpar *= γ
+        γperp *= γ
+        # Update the solution and barrier parameter
+        α .+= γpar * top(Δxspar) + γperp * top(Δxsperp)
+        s .+= γpar * bottom(Δxspar) + γperp * bottom(Δxsperp)
+        λ .= (1 - γpar) * top(λν) + (γpar * top(λνpar) + γperp * top(λνperp))
+        @assert all(>(0), s) && all(>(0), λ) "Nonpositivity of s or λ: s = $s, λ = $λ"
+        τ *= sqrt(1 - min(γpar, γperp, 1 - τminfrac^2))
+        @show τ
         # @show α s λ τ
         iter += 1
+        residual!(r, logA, α, W)
+        mul!(top(gxs), J.Ji', r)
         bottom(gxs) .= -τ ./ s
         H.λsratio .= λ ./ s
-        totalviolnew = sum(abs2, cviol) + sum(abs2, gxs + J' * λν)
-        # totalviolnew > totalviol && break
-        totalviol = totalviolnew
+        top(cviol) .= r + s
     end
     @show τ
     return exp.(α)
