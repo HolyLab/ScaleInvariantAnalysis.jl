@@ -65,7 +65,7 @@ function symcover(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
-function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfrac = 1//8, rtol=sqrt(eps(float(eltype(A)))), atol=0, itermax=20, btmax=5)
+function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfrac = 1//8, rtol=sqrt(eps(float(eltype(A)))), atol=0, itermax=max(50, size(A, 1)), btmax=5)
     @assert issymmetric(A)  # will generalize later
     ax = axes(A, 1)
     n = length(ax)
@@ -83,7 +83,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
 
     sumlogA = vec(sum(logA; dims=2))
     α = B \ sumlogA
-    display(exp.(α) .* exp.(α)')
+    # α = max.(α, diag(logA) / 2)
     r = residual(logA, α, W)
     rtmp = similar(r)
     N = length(r)
@@ -107,14 +107,13 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     totalviol = sum(abs2, cviol) + sum(abs2, gxs + J' * λν)
     iter = 0
     while iter < itermax
-        println("\nIteration $iter:")
-        # @show H.λsratio
+        # println("\nIteration $iter:")
         # trimr!(ws, J', -gxs, -cviol#=, Δxs0, λν=#; ν=0.0, τ=1.0, M=H, ldiv=true) #itmax=2*(length(gxs) + length(cviol)))
         # @show ws.stats.solved
         # Solve for the Newton step, separating parallel and perpendicular components to the constraint manifold
         lsqr!(wslsqr, J', -gxs; M=H, ldiv=true)
         lnlq!(wslnlq, J, cviol; N=H, ldiv=true) #, λ=sqrt(eps(eltype(g))))
-        @show wslsqr.stats.solved wslnlq.stats.solved
+        # @show wslsqr.stats.solved wslnlq.stats.solved
         λνpar = wslsqr.x
         Δxspar = - (H \ (gxs + J' * λνpar))
         Δxsperp, λνperp = -wslnlq.x, wslnlq.y
@@ -122,52 +121,49 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
         δpar = abs(dot(gxs + J' * λνpar, Δxspar))
         δperp = dotabs(cviol, λνperp)
         objval = sum(abs2, r) / 2
-        max(δpar, δperp) <= rtol * objval + atol && break
+        # @show (δpar, δperp, τ * abs(sum(log, s)))
+        max(δpar, δperp, τ * abs(sum(log, s))) <= rtol * objval + atol && break
         # Determine step lengths that decrease the merit functions
         meritpar0 = objval - τ * sum(log, s) + dot(λνpar, cviol)
-        # @show objval τ * sum(log, s) dot(λνpar, cviol) dot(λνpar, r + s)
-        γpar = maxstep(bottom(Δxspar), s)
+        Δλ = top(λνpar) - λ
+        γpar = maxstep(Δλ, λ, maxstep(bottom(Δxspar), s))
         iterbt = 0
-        @show γpar meritpar0
         while iterbt < btmax
             xstmp = xs + γpar * Δxspar
             residual!(rtmp, logA, top(xstmp), W)
             meritparγ = sum(abs2, rtmp) / 2 - τ * sum(log, bottom(xstmp)) + dot(λνpar, rtmp + bottom(xstmp))
-            @show meritparγ
-            # @show meritparγ sum(abs2, rtmp) / 2 τ * sum(log, bottom(xstmp)) dot(λνpar, rtmp + bottom(xstmp))
             meritparγ < meritpar0 && break
             iterbt += 1
             γpar /= (1 + iterbt)
         end
         iterbt == btmax && (γpar = zero(γpar))
         meritperp0 = dotabs(cviol, λνperp)
-        γperp = maxstep(bottom(Δxsperp), s + γpar * bottom(Δxspar))
-        @show γperp meritperp0
+        γperp = maxstep(top(λνperp), (1 - γpar) * top(λν) + γpar * top(λνpar), maxstep(bottom(Δxsperp), s + γpar * bottom(Δxspar)))
         iterbt = 0
         while iterbt < btmax
             xstmp = xs + (γpar * Δxspar + γperp * Δxsperp)
             residual!(rtmp, logA, top(xstmp), W)
             meritperpγ = dotabs(rtmp + bottom(xstmp), λνperp)
-            @show meritperpγ
             meritperpγ < meritperp0 && break
             iterbt += 1
         end
         iterbt == btmax && (γperp = zero(γperp))
-        # Compute the maximum step length that maintains positivity of `s` and `λ`
-        # While this was checked individually for the parallel and perpendicular steps, we need to check it again for the combined step
-        λnew = (1 - γpar) * top(λν) + (γpar * top(λνpar) + γperp * top(λνperp))
-        Δλ = λnew - λ
-        γ = maxstep(Δλ, λ, maxstep(γpar*bottom(Δxspar) + γperp*bottom(Δxsperp), s))
-        @show γ γpar γperp
-        γpar *= γ
-        γperp *= γ
+        # # Compute the maximum step length that maintains positivity of `s` and `λ`
+        # # While this was checked individually for the parallel and perpendicular steps, we need to check it again for the combined step
+        # λnew = (1 - γpar) * top(λν) + (γpar * top(λνpar) + γperp * top(λνperp))
+        # Δλ = λnew - λ
+        # γ = maxstep(Δλ, λ, maxstep(γpar*bottom(Δxspar) + γperp*bottom(Δxsperp), s))
+        # @show γ γpar γperp
+        # γpar *= γ
+        # γperp *= γ
+        # @show γpar γperp
         # Update the solution and barrier parameter
         α .+= γpar * top(Δxspar) + γperp * top(Δxsperp)
         s .+= γpar * bottom(Δxspar) + γperp * bottom(Δxsperp)
         λ .= (1 - γpar) * top(λν) + (γpar * top(λνpar) + γperp * top(λνperp))
         @assert all(>(0), s) && all(>(0), λ) "Nonpositivity of s or λ: s = $s, λ = $λ"
         τ *= sqrt(1 - min(γpar, γperp, 1 - τminfrac^2))
-        @show τ
+        # @show τ
         # @show α s λ τ
         iter += 1
         residual!(r, logA, α, W)
@@ -176,7 +172,8 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
         H.λsratio .= λ ./ s
         top(cviol) .= r + s
     end
-    @show τ
+    @show iter
+    # @show τ
     return exp.(α)
 end
 
