@@ -88,13 +88,13 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     rtmp = similar(r)
     N = length(r)
     J = JacLNXS(jopsym(A, N), zeros(T, 0, length(α)))
-    λ, τ = warmstart(r, J, B)
+    λ, τ = warmstart(r, J.Ji, B)
+    @show λ τ
     iszero(τ) && return exp.(α)
     s = τ ./ λ
     xs = XS(α, s)
     λν = LN(λ, T[])
     H = HessXS(B, xs, λν)
-    # Hinv = HessXS(ShermanMorrisonInverse(B), xs.s ./ λν.λ)  #
     g₀ = J.Ji'*r
     h1, h2 = sum(-r), dot(g₀, B \ g₀)
     @show h1 h2 length(r)
@@ -121,7 +121,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
         δpar = abs(dot(gxs + J' * λνpar, Δxspar))
         δperp = dotabs(cviol, λνperp)
         objval = sum(abs2, r) / 2
-        # @show (δpar, δperp, τ * abs(sum(log, s)))
+        @show (δpar, δperp, τ * abs(sum(log, s)))
         max(δpar, δperp, τ * abs(sum(log, s))) <= rtol * objval + atol && break
         # Determine step lengths that decrease the merit functions
         meritpar0 = objval - τ * sum(log, s) + dot(λνpar, cviol)
@@ -172,7 +172,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
         H.λsratio .= λ ./ s
         top(cviol) .= r + s
     end
-    @show iter
+    @show iter λ τ
     # @show τ
     return exp.(α)
 end
@@ -264,7 +264,7 @@ function jopsym(A, N)
         end)
 end
 
-function warmstart(r::AbstractVector{T}, J, B; itermax=100, rtol=cbrt(eps(float(T)))) where T<:Real
+function warmstart(r::AbstractVector{T}, J, B; itermax=5, rtol=cbrt(eps(float(T)))) where T<:Real
     all(<=(zero(T)), r) && return fill(zero(T), length(r)), zero(T)
     # Initially, assume all λᵢ = λ for scalar λ, and solve for λ and τ
     w = r .> zero(T)
@@ -274,39 +274,33 @@ function warmstart(r::AbstractVector{T}, J, B; itermax=100, rtol=cbrt(eps(float(
     mI, nw = length(r), sum(w)
     λs, τ = warmstart1d(h, H, mI, nw)
     λ = fill(λs, mI)
-    # Nonlinear conjugate-gradient refinement of λ and τ
+    # Quasi-Newton refinement of λ and τ
     λτ = vcat(λ, τ)
-    dualg = similar(λτ)
+    dualg, dualgtmp = similar(λτ), similar(λτ)
     h = -r
     iter = 0
     while iter < itermax
         E0 = dualobjective!(dualg, λτ, h, J, B)
-        λ, τ = @view(λτ[begin:end-1], last(λτ))
+        λ, τ = @view(λτ[begin:end-1]), last(λτ)
         Δλτ = - vcat(@view(dualg[begin:end-1]) .* λ.^2 ./ τ, dualg[end] * τ / length(h))  # preconditioned gradient step
-        ϕ(α) = dualobjective!(nothing, λτ + α * Δλτ, h, J, B)
-        gnorm = norm(dualg)
-        gnorm <= rtol * abs(dualobjective!(nothing, λτ, h, J, B)) && break
-        # println("Warm start iteration $iter: dual objective = $(dualobjective!(nothing, λτ, h, J, B)), dual gradient norm = $gnorm")
-        # println("λ = $(λ), τ = $τ")
-        # println("Dual gradient: $dualg")
-        # Update λ and τ using a simple nonlinear conjugate-gradient step
-        if iter == 0
-            Δλτ = -dualg
-        else
-            β = dot(dualg, dualg) / dot(dualg_prev, dualg_prev)
-            Δλτ = -dualg + β * Δλτ_prev
+        function ϕϕ′(t)
+            ϕt = dualobjective!(dualgtmp, λτ + t * Δλτ, h, J, B)
+            ϕt′ = dot(dualgtmp, Δλτ)
+            return ϕt, ϕt′
         end
-        α = 1.0  # line search step size (could be improved with backtracking or other line search methods)
-        λτ .+= α * Δλτ
-        λτ .= max.(λτ, eps(T))  # ensure positivity of λ and τ
-        dualg_prev = copy(dualg)
-        Δλτ_prev = copy(Δλτ)
+        E0′ = dot(dualg, Δλτ)
+        abs(E0′) <= rtol * abs(E0) && break
+        t, converged = armijo_wolfe(ϕϕ′, E0, E0′, maxstep(Δλτ, λτ, typemax(one(eltype(λτ)))))
+        println("Iteration $iter: E = $E0, t = $t")
+        λτ .+= t * Δλτ
         iter += 1
     end
+    return λτ[begin:end-1], last(λτ)
 end
 
 function dualobjective!(dualg, λτ, h, J, B)
-    λ, τ = @view(λτ[begin:end-1], last(λτ))
+    λ, τ = @view(λτ[begin:end-1]), last(λτ)
+    any(<=(zero(eltype(λ))), λ) && return typemax(eltype(λ))
     Jtλ = J' * λ
     BdivJtλ = B \ Jtλ
     if dualg !== nothing
@@ -314,6 +308,48 @@ function dualobjective!(dualg, λτ, h, J, B)
         dualg[end] = length(h) * log(τ) - sum(log, λ)
     end
     return h' * λ + dot(Jtλ, BdivJtλ) / 2 + length(h) * τ * (log(τ) - 1) - τ * sum(log, λ)
+end
+
+# This is copied, with modifications, from SolverTools.jl
+function armijo_wolfe(
+    ϕ,
+    ϕ₀::T,
+    ϕ₀′::T,
+    tmax::T;
+    t::T = one(T),
+    τ₀::T = max(T(1.0e-4), sqrt(eps(T))),
+    τ₁::T = T(0.9999),
+    bk_max::Int = 10,
+    bW_max::Int = 5,
+) where {T <: AbstractFloat}
+    # Perform improved Armijo linesearch.
+    nbk = 0
+    nbW = 0
+
+    # First try to increase t to satisfy loose Wolfe condition
+    ϕt, ϕt′ = ϕ(t)
+    while (ϕt′ < τ₁ * ϕ₀′) && (ϕt <= ϕ₀ + τ₀ * t * ϕ₀′) && (nbW < bW_max)
+        t *= 5
+        t = min(t, tmax)
+        ϕt, ϕt′ = ϕ(t)
+        nbW += 1
+    end
+
+    ϕgoal = ϕ₀ + τ₀ * t * ϕ₀′
+    fact = -T(8//10)
+    ϵ = eps(T)^T(3 / 5)
+
+    # Enrich Armijo's condition with Hager & Zhang numerical trick
+    Armijo = (ϕt <= ϕgoal) || ((ϕt <= ϕ₀ + ϵ * abs(ϕ₀)) && (ϕt′ <= fact * ϕ₀′))
+    while !Armijo && (nbk < bk_max)
+        t *= 4//10
+        ϕgoal = ϕ₀ + τ₀ * t * ϕ₀′
+        ϕt, ϕt′ = ϕ(t)
+        Armijo = (ϕt <= ϕgoal) || ((ϕt <= ϕ₀ + ϵ * abs(ϕ₀)) && (ϕt′ <= fact * ϕ₀′))
+        nbk += 1
+    end
+    nbk < bk_max && @assert Armijo && ϕt′ >= τ₁ * ϕ₀′
+    return t, Armijo
 end
 
 
