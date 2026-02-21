@@ -78,27 +78,27 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
         u = nz / sqrt(sum(nz))
         ShermanMorrisonMatrix{T}(Diagonal(nz), u, u)
     else
-        Diagonal(nz) + W
+        PDMat(Diagonal(nz) + W)
     end
 
     sumlogA = vec(sum(logA; dims=2))
+    # Start α at the unconstrained minimizer of the objective function
     α = B \ sumlogA
-    # α = max.(α, diag(logA) / 2)
     r = residual(logA, α, W)
     rtmp = similar(r)
     N = length(r)
-    s = -r
-    means = sum(s) / N
-    vars = sum(s.^2) / N - means^2
-    δ = sqrt(vars) / N   # a small positive value
-    s .= max.(s, δ)
-    λ = τ ./ s
+    J = JacLNXS(jopsym(A, N), zeros(T, 0, length(α)))
+    λ, τ = warmstart(r, J, B)
+    iszero(τ) && return exp.(α)
+    s = τ ./ λ
     xs = XS(α, s)
     λν = LN(λ, T[])
     H = HessXS(B, xs, λν)
     # Hinv = HessXS(ShermanMorrisonInverse(B), xs.s ./ λν.λ)  #
-    J = JacLNXS(jopsym(A, N), zeros(T, 0, length(α)))
-    gxs = TopBottomVector(J.Ji'*r, -τ ./ s)
+    g₀ = J.Ji'*r
+    h1, h2 = sum(-r), dot(g₀, B \ g₀)
+    @show h1 h2 length(r)
+    gxs = TopBottomVector(g₀, -τ ./ s)
     cviol = TopBottomVector(r + s, T[])
     # Δxs0 = zero(TopBottomVector(xs))
     # ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
@@ -264,7 +264,103 @@ function jopsym(A, N)
         end)
 end
 
+function warmstart(r::AbstractVector{T}, J, B; itermax=100, rtol=cbrt(eps(float(T)))) where T<:Real
+    all(<=(zero(T)), r) && return fill(zero(T), length(r)), zero(T)
+    # Initially, assume all λᵢ = λ for scalar λ, and solve for λ and τ
+    w = r .> zero(T)
+    h = -(w'*r)
+    Δx = J' * w
+    H = dot(Δx, B \ Δx)
+    mI, nw = length(r), sum(w)
+    λs, τ = warmstart1d(h, H, mI, nw)
+    λ = fill(λs, mI)
+    # Nonlinear conjugate-gradient refinement of λ and τ
+    λτ = vcat(λ, τ)
+    dualg = similar(λτ)
+    h = -r
+    iter = 0
+    while iter < itermax
+        E0 = dualobjective!(dualg, λτ, h, J, B)
+        λ, τ = @view(λτ[begin:end-1], last(λτ))
+        Δλτ = - vcat(@view(dualg[begin:end-1]) .* λ.^2 ./ τ, dualg[end] * τ / length(h))  # preconditioned gradient step
+        ϕ(α) = dualobjective!(nothing, λτ + α * Δλτ, h, J, B)
+        gnorm = norm(dualg)
+        gnorm <= rtol * abs(dualobjective!(nothing, λτ, h, J, B)) && break
+        # println("Warm start iteration $iter: dual objective = $(dualobjective!(nothing, λτ, h, J, B)), dual gradient norm = $gnorm")
+        # println("λ = $(λ), τ = $τ")
+        # println("Dual gradient: $dualg")
+        # Update λ and τ using a simple nonlinear conjugate-gradient step
+        if iter == 0
+            Δλτ = -dualg
+        else
+            β = dot(dualg, dualg) / dot(dualg_prev, dualg_prev)
+            Δλτ = -dualg + β * Δλτ_prev
+        end
+        α = 1.0  # line search step size (could be improved with backtracking or other line search methods)
+        λτ .+= α * Δλτ
+        λτ .= max.(λτ, eps(T))  # ensure positivity of λ and τ
+        dualg_prev = copy(dualg)
+        Δλτ_prev = copy(Δλτ)
+        iter += 1
+    end
+end
 
+function dualobjective!(dualg, λτ, h, J, B)
+    λ, τ = @view(λτ[begin:end-1], last(λτ))
+    Jtλ = J' * λ
+    BdivJtλ = B \ Jtλ
+    if dualg !== nothing
+        dualg[begin:end-1] .= h .+ (J * BdivJtλ) .- τ ./ λ
+        dualg[end] = length(h) * log(τ) - sum(log, λ)
+    end
+    return h' * λ + dot(Jtλ, BdivJtλ) / 2 + length(h) * τ * (log(τ) - 1) - τ * sum(log, λ)
+end
+
+
+function warmstart1d(h::T, H::T, mI::Int, nw::Int; itermax=10, rtol=sqrt(eps(float(T)))) where T<:Real
+    λsτ(τ) = (-h + sqrt(h^2 + 4 * τ * H * nw)) / (2 * H)
+    function E(τ)
+        λτ = λsτ(τ)
+        iszero(τ) && return h*λτ + H * λτ^2 / 2
+        return h*λτ + H * λτ^2 / 2 + mI * τ * (log(τ) - 1) - nw * τ * log(λτ)
+    end
+    # One-dimensional minimization of E with respect to τ
+    τmin = zero(T)
+    τ = h^2 / (4 * H * nw)   # location where τ starts to substantially affect the value of λ
+    E0, Eτ = E(τmin), E(τ)
+    if Eτ <= E0  # we may not have bracketed the minimum
+        while true
+            τlast, Elast = τ, Eτ
+            τ *= 2
+            Eτ = E(τ)
+            Eτ > Elast && break
+            τmin = τlast
+        end
+    end
+    τmax = τ
+    # Golden section search
+    ϕ = (sqrt(5) + 1) / 2
+    τ1 = τmax - (τmax - τmin) / ϕ
+    τ2 = τmin + (τmax - τmin) / ϕ
+    E1, E2 = E(τ1), E(τ2)
+    iter = 0
+    while iter < itermax && τmax - τmin > rtol * τmax
+        if E1 < E2
+            τmax, Eτ = τ2, E2
+            τ2, E2 = τ1, E1
+            τ1 = τmax - (τmax - τmin) / ϕ
+            E1 = E(τ1)
+        else
+            τmin, Eτ = τ1, E1
+            τ1, E1 = τ2, E2
+            τ2 = τmin + (τmax - τmin) / ϕ
+            E2 = E(τ2)
+        end
+        iter += 1
+    end
+    τ = (τmin + τmax) / 2
+    return τ, λsτ(τ)
+end
 
 
 # Sherman-Morrison division
