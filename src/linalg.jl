@@ -32,9 +32,7 @@ Base.setindex!(SM::ShermanMorrisonMatrix, val, i::Int, j::Int) = setindex!(SM.A,
 function LinearAlgebra.mul!(y::AbstractVector, SM::ShermanMorrisonMatrix, x::AbstractVector, α::Number, β::Number)
     mul!(y, SM.A, x, α, β)
     dotvx = α * dot(SM.v, x)
-    for i in eachindex(y)
-        y[i] += SM.u[i] * dotvx
-    end
+    y .+= dotvx .* SM.u
     return y
 end
 
@@ -42,6 +40,6 @@ function LinearAlgebra.ldiv!(y::AbstractVector, SM::ShermanMorrisonMatrix, x::Ab
     y .= x
     ldiv!(y, SM.A, y)
     α = dot(SM.v, y) / (1 + SM.vᵀA⁻¹u)
-    y .-= α * SM.A⁻¹u
+    y .-= α .* SM.A⁻¹u
     return y
 end

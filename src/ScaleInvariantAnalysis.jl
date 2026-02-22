@@ -85,7 +85,6 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     # Start α at the unconstrained minimizer of the objective function
     α = B \ sumlogA
     r = residual(logA, α, W)
-    rtmp = similar(r)
     N = length(r)
     J = JacLNXS(jopsym(A, N), zeros(T, 0, length(α)))
     λ, τ = warmstart(r, J.Ji, B)
@@ -103,6 +102,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     # ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
     wslsqr = LsqrWorkspace(KrylovConstructor(gxs, cviol))
     wslnlq = LnlqWorkspace(KrylovConstructor(cviol, gxs))
+    xstmp, rtmp = similar(xs), similar(r)
     iter = 0
     # @show α
     while iter < itermax
@@ -131,7 +131,9 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
         while iterbt < btmax
             xstmp = xs + γ * Δxs
             residual!(rtmp, logA, top(xstmp), W)
-            merit = sum(abs2, rtmp) / 2 - τ * sum(log, bottom(xstmp)) + dot(λνpar, rtmp + bottom(xstmp)) + dotabs(rtmp + bottom(xstmp), λνperp)
+            merit = sum(abs2, rtmp) / 2 - τ * sum(log, bottom(xstmp))
+            rtmp .+= bottom(xstmp)
+            merit += dot(λνpar, rtmp) + dotabs(rtmp, λνperp)
             merit < merit0 && break
             iterbt += 1
             γ /= (1 + iterbt)
@@ -139,9 +141,9 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
         iterbt == btmax && (γ = zero(γ))
         # println("  γ = $γ, γ0 = $γ0")
         # Update the solution and barrier parameter
-        α .+= γ * top(Δxs)
-        s .+= γ * bottom(Δxs)
-        λ .= (1 - γ) * top(λν) + (γ * top(λνpar) + γ * top(λνperp))
+        α .+= γ .* top(Δxs)
+        s .+= γ .* bottom(Δxs)
+        λ .= (1 - γ) .* top(λν) .+ γ .* (top(λνpar) .+ top(λνperp))
         @assert all(>(0), s) && all(>(0), λ) "Nonpositivity of s or λ: s = $s, λ = $λ"
         τ *= sqrt(1 - min(γ, 1 - τminfrac^2))
         # @show τ
@@ -207,42 +209,43 @@ end
 function jopsym(A, N)
     ax = axes(A, 1)
     n = length(ax)
-    T = typeof(log(oneunit(eltype(A))))
-    return LinearOperator(T, N, n, false, false,
-        function(out, v, α, β)    # mul!(out, J, v, α, β)
-            if iszero(β)
-                fill!(out, zero(T))
-            elseif β != 1
-                out .*= β
+    function jmul!(out::AbstractVector{T}, v, α, β) where T    # mul!(out, J, v, α, β)
+        if iszero(β)
+            fill!(out, zero(T))
+        elseif β != 1
+            out .*= β
+        end
+        k = 0
+        for j in ax
+            for i in j:last(ax)
+                iszero(A[i, j]) && continue
+                out[k += 1] -= α * (v[i] + v[j])
             end
-            k = 0
-            for j in ax
-                for i in j:last(ax)
-                    iszero(A[i, j]) && continue
-                    out[k += 1] -= v[i] + v[j]
-                end
+        end
+        @assert k == length(out)
+        return out
+    end
+    function jmult!(out::AbstractVector{T}, v, α, β) where T    # mul!(out, J', v, α, β)
+        if iszero(β)
+            fill!(out, zero(T))
+        elseif β != 1
+            out .*= β
+        end
+        k = 0
+        for j in ax
+            for i in j:last(ax)
+                iszero(A[i, j]) && continue
+                k += 1
+                vk = α * v[k]
+                out[i] -= vk
+                out[j] -= vk
             end
-            @assert k == length(out)
-            return out
-        end,
-        function(out, v, α, β)    # mul!(out, J', v, α, β)
-            if iszero(β)
-                fill!(out, zero(T))
-            elseif β != 1
-                out .*= β
-            end
-            k = 0
-            for j in ax
-                for i in j:last(ax)
-                    iszero(A[i, j]) && continue
-                    k += 1
-                    out[i] -= v[k]
-                    out[j] -= v[k]
-                end
-            end
-            @assert k == length(v)
-            return out
-        end)
+        end
+        @assert k == length(v)
+        return out
+    end
+    S = float(eltype(A))
+    return LinearOperator{S,Vector{S}}(N, n, false, false, jmul!, jmult!, jmult!)
 end
 
 function warmstart(r::AbstractVector{T}, J, B; itermax=5, rtol=cbrt(eps(float(T)))) where T<:Real
@@ -264,10 +267,12 @@ function warmstart(r::AbstractVector{T}, J, B; itermax=5, rtol=cbrt(eps(float(T)
         E0 = dualobjective!(dualg, λτ, h, J, B)
         λ, τ = @view(λτ[begin:end-1]), last(λτ)
         Δλτ = - vcat(@view(dualg[begin:end-1]) .* λ.^2 ./ τ, dualg[end] * τ / length(h))  # preconditioned gradient step
-        function ϕϕ′(t)
-            ϕt = dualobjective!(dualgtmp, λτ + t * Δλτ, h, J, B)
-            ϕt′ = dot(dualgtmp, Δλτ)
-            return ϕt, ϕt′
+        ϕϕ′ = let λτ = λτ, Δλτ = Δλτ, h = h, J = J, B = B, dualgtmp = dualgtmp
+            function(t)
+                ϕt = dualobjective!(dualgtmp, λτ + t * Δλτ, h, J, B)
+                ϕt′ = dot(dualgtmp, Δλτ)
+                return ϕt, ϕt′
+            end
         end
         E0′ = dot(dualg, Δλτ)
         abs(E0′) <= rtol * abs(E0) && break
