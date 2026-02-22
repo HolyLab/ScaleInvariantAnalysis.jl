@@ -100,7 +100,8 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     cviol = TopBottomVector(r + s, T[])
     # Δxs0 = zero(TopBottomVector(xs))
     # ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
-    wslsqr = LsqrWorkspace(KrylovConstructor(gxs, cviol))
+    # wslsqr = LsqrWorkspace(KrylovConstructor(gxs, cviol))
+    wslslq = LslqWorkspace(KrylovConstructor(gxs, cviol))
     wslnlq = LnlqWorkspace(KrylovConstructor(cviol, gxs))
     xstmp, rtmp = similar(xs), similar(r)
     iter = 0
@@ -110,10 +111,12 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
         # trimr!(ws, J', -gxs, -cviol#=, Δxs0, λν=#; ν=0.0, τ=1.0, M=H, ldiv=true) #itmax=2*(length(gxs) + length(cviol)))
         # @show ws.stats.solved
         # Solve for the Newton step, separating parallel and perpendicular components to the constraint manifold
-        lsqr!(wslsqr, J', -gxs; M=H, ldiv=true)
+        # lsqr!(wslsqr, J', -gxs; M=H, ldiv=true)
+        lslq!(wslslq, J', -gxs; M=H, ldiv=true)
         lnlq!(wslnlq, J, cviol; N=H, ldiv=true) #, λ=sqrt(eps(eltype(g))))
         # @show wslsqr.stats.solved wslnlq.stats.solved
-        λνpar = wslsqr.x
+        # println("  lslq iter = $(wslslq.stats.niter), lnlq iter = $(wslnlq.stats.niter)")
+        λνpar = wslslq.x # wslsqr.x
         Δxspar = - (H \ (gxs + J' * λνpar))
         Δxsperp, λνperp = -wslnlq.x, wslnlq.y
         # Compute convergence criteria
