@@ -36,10 +36,13 @@ function LinearAlgebra.mul!(y::AbstractVector, SM::ShermanMorrisonMatrix, x::Abs
     return y
 end
 
-function LinearAlgebra.ldiv!(y::AbstractVector, SM::ShermanMorrisonMatrix, x::AbstractVector)
-    y .= x
-    ldiv!(y, SM.A, y)
+Base.:(*)(SM::ShermanMorrisonMatrix, x::AbstractVector) = mul!(similar(x), SM, x, true, false)
+
+function LinearAlgebra.ldiv!(SM::ShermanMorrisonMatrix, y::AbstractVector)
+    ldiv!(SM.A, y)
     α = dot(SM.v, y) / (1 + SM.vᵀA⁻¹u)
     y .-= α .* SM.A⁻¹u
     return y
 end
+
+Base.:(\)(SM::ShermanMorrisonMatrix, x::AbstractVector) = ldiv!(similar(x), SM, x)
