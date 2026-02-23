@@ -98,8 +98,8 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     g₀ = J.Ji'*r
     gxs = TopBottomVector(g₀, -τ ./ s)
     cviol = TopBottomVector(r + s, T[])
-    Δxs0 = zero(TopBottomVector(xs))
-    ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
+    # Δxs0 = zero(TopBottomVector(xs))
+    # ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
     # wslsqr = LsqrWorkspace(KrylovConstructor(gxs, cviol))
     wspar = LslqWorkspace(KrylovConstructor(gxs, cviol))
     wsperp = LnlqWorkspace(KrylovConstructor(cviol, gxs))
