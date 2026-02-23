@@ -98,8 +98,8 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     g₀ = J.Ji'*r
     gxs = TopBottomVector(g₀, -τ ./ s)
     cviol = TopBottomVector(r + s, T[])
-    # Δxs0 = zero(TopBottomVector(xs))
-    # ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
+    Δxs0 = zero(TopBottomVector(xs))
+    ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
     # wslsqr = LsqrWorkspace(KrylovConstructor(gxs, cviol))
     wslslq = LslqWorkspace(KrylovConstructor(gxs, cviol))
     wslnlq = LnlqWorkspace(KrylovConstructor(cviol, gxs))
@@ -107,8 +107,10 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     iter = 0
     # @show α
     while iter < itermax
-        # println("\nIteration $iter:")
-        # trimr!(ws, J', -gxs, -cviol#=, Δxs0, λν=#; ν=0.0, τ=1.0, M=H, ldiv=true) #itmax=2*(length(gxs) + length(cviol)))
+        println("\nIteration $iter:")
+        trimr!(ws, J', -gxs, -cviol#=, Δxs0, λν=#; ν=0.0, τ=1.0, M=H, ldiv=true, atol = sqrt(eps(T)) * sum(abs2, W .* (logA .- α .* α')), verbose=100) #itmax=2*(length(gxs) + length(cviol)))
+        println("  trimr iter = $(ws.stats.niter), solved = $(ws.stats.solved)")
+        @show sum(abs, TopBottomVector(λν) - ws.y)
         # @show ws.stats.solved
         # Solve for the Newton step, separating parallel and perpendicular components to the constraint manifold
         # lsqr!(wslsqr, J', -gxs; M=H, ldiv=true)
