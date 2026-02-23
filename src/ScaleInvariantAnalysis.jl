@@ -73,7 +73,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     z = log(oneunit(eltype(A)))
     T = typeof(z)
     logA = [iszero(aij) ? z : log(abs(aij)) for aij in A]
-    nz = vec(sum(W; dims=2))
+    nz = vec(sum(W; dims=2, init=0))
     B = if !exact || all(==(n), nz)
         u = nz / sqrt(sum(nz))
         ShermanMorrisonMatrix{T}(Diagonal(nz), u, u)
@@ -101,40 +101,48 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     Δxs0 = zero(TopBottomVector(xs))
     ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
     # wslsqr = LsqrWorkspace(KrylovConstructor(gxs, cviol))
-    wslslq = LslqWorkspace(KrylovConstructor(gxs, cviol))
-    wslnlq = LnlqWorkspace(KrylovConstructor(cviol, gxs))
+    wspar = LslqWorkspace(KrylovConstructor(gxs, cviol))
+    wsperp = LnlqWorkspace(KrylovConstructor(cviol, gxs))
+    gxstmp, Δxspar, Δxsperp, Δxs = similar(gxs), similar(gxs), similar(gxs), similar(gxs)
     xstmp, rtmp = similar(xs), similar(r)
+    λνnew, Δλν = TopBottomVector(similar(λ), T[]), TopBottomVector(similar(λ), T[])
     iter = 0
     # @show α
     while iter < itermax
-        println("\nIteration $iter:")
-        trimr!(ws, J', -gxs, -cviol#=, Δxs0, λν=#; ν=0.0, τ=1.0, M=H, ldiv=true, atol = sqrt(eps(T)) * sum(abs2, W .* (logA .- α .* α')), verbose=100) #itmax=2*(length(gxs) + length(cviol)))
-        println("  trimr iter = $(ws.stats.niter), solved = $(ws.stats.solved)")
-        @show sum(abs, TopBottomVector(λν) - ws.y)
+        # println("\nIteration $iter:")
+        gxstmp .= .-gxs
+        # Δxs .= gxstmp
+        # mul!(Δxs, J', λν, -1, true)
+        # ldiv!(H, Δxs)
+        # trimr!(ws, J', gxstmp, -cviol, Δxs0, λν; ν=0.0, τ=1.0, M=H, ldiv=true, atol = (eps(T))^(1/4) * sum(abs2, r), verbose=100) #itmax=2*(length(gxs) + length(cviol)))
+        # println("  trimr iter = $(ws.stats.niter), solved = $(ws.stats.solved)")
         # @show ws.stats.solved
         # Solve for the Newton step, separating parallel and perpendicular components to the constraint manifold
-        # lsqr!(wslsqr, J', -gxs; M=H, ldiv=true)
-        lslq!(wslslq, J', -gxs; M=H, ldiv=true)
-        lnlq!(wslnlq, J, cviol; N=H, ldiv=true) #, λ=sqrt(eps(eltype(g))))
-        # @show wslsqr.stats.solved wslnlq.stats.solved
-        # println("  lslq iter = $(wslslq.stats.niter), lnlq iter = $(wslnlq.stats.niter)")
-        λνpar = wslslq.x # wslsqr.x
-        Δxspar = - (H \ (gxs + J' * λνpar))
-        Δxsperp, λνperp = -wslnlq.x, wslnlq.y
+        # lsqr!(wslsqr, J', gxstmp; M=H, ldiv=true)
+        lslq!(wspar, J', gxstmp; M=H, ldiv=true)#, atol=(eps(T))^(1/4))
+        lnlq!(wsperp, J, cviol; N=H, ldiv=true, rtol=(eps(T))^(1/4)) #, λ=sqrt(eps(eltype(g))))
+        # @show wslsqr.stats.solved wsperp.stats.solved
+        # println("  lslq iter = $(wspar.stats.niter), lnlq iter = $(wsperp.stats.niter)")
+        λνpar = wspar.x # wslsqr.x
+        mul!(gxstmp, J', λνpar, -1, true)
+        ldiv!(Δxspar, H, gxstmp)
+        Δxsperp .= -1 .* wsperp.x
+        λνperp = wsperp.y
         # Compute convergence criteria
-        δpar = abs(dot(gxs + J' * λνpar, Δxspar))
+        δpar = abs(dot(gxstmp, Δxspar))
         δperp = dotabs(cviol, λνperp)
         objval = sum(abs2, r) / 2
         # @show (δpar, δperp, τ * abs(sum(log, s)))
         max(δpar, δperp, τ * abs(sum(log, s))) <= rtol * objval + atol && break
         # Diagonal backtracking
-        Δxs, λνnew = Δxspar + Δxsperp, λνpar + λνperp
-        Δλν = λνnew - λν
+        Δxs .= Δxspar .+ Δxsperp
+        λνnew .= λνpar .+ λνperp
+        Δλν .= λνnew .- λν
         merit0 = objval - τ * sum(log, s) + dot(λνpar, cviol) + dotabs(cviol, λνperp)
         γ = γ0 = maxstep(top(Δλν), top(λν), maxstep(bottom(Δxs), bottom(xs)))
         iterbt = 0
         while iterbt < btmax
-            xstmp = xs + γ * Δxs
+            xstmp .= xs .+ γ .* Δxs
             residual!(rtmp, logA, top(xstmp), W)
             merit = sum(abs2, rtmp) / 2 - τ * sum(log, bottom(xstmp))
             rtmp .+= bottom(xstmp)
@@ -158,7 +166,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
         mul!(top(gxs), J.Ji', r)
         bottom(gxs) .= -τ ./ s
         H.λsratio .= λ ./ s
-        top(cviol) .= r + s
+        top(cviol) .= r .+ s
     end
     # @show iter λ τ
     # @show α
@@ -266,15 +274,18 @@ function warmstart(r::AbstractVector{T}, J, B; itermax=5, rtol=cbrt(eps(float(T)
     # Quasi-Newton refinement of λ and τ
     λτ = vcat(λ, τ)
     dualg, dualgtmp = similar(λτ), similar(λτ)
+    λτtmp = similar(λτ)
+    Jtλtmp, BdivJtλtmp, Jxtmp = similar(Δx), similar(Δx), similar(r)
     h = -r
     iter = 0
     while iter < itermax
-        E0 = dualobjective!(dualg, λτ, h, J, B)
+        E0 = dualobjective!(dualg, λτ, h, J, B, Jtλtmp, BdivJtλtmp, Jxtmp)
         λ, τ = @view(λτ[begin:end-1]), last(λτ)
         Δλτ = - vcat(@view(dualg[begin:end-1]) .* λ.^2 ./ τ, dualg[end] * τ / length(h))  # preconditioned gradient step
-        ϕϕ′ = let λτ = λτ, Δλτ = Δλτ, h = h, J = J, B = B, dualgtmp = dualgtmp
+        ϕϕ′ = let λτ = λτ, Δλτ = Δλτ, h = h, J = J, B = B, dualgtmp = dualgtmp, λτtmp = λτtmp
             function(t)
-                ϕt = dualobjective!(dualgtmp, λτ + t * Δλτ, h, J, B)
+                λτtmp .= λτ .+ t .* Δλτ
+                ϕt = dualobjective!(dualgtmp, λτtmp, h, J, B, Jtλtmp, BdivJtλtmp, Jxtmp)
                 ϕt′ = dot(dualgtmp, Δλτ)
                 return ϕt, ϕt′
             end
@@ -284,22 +295,23 @@ function warmstart(r::AbstractVector{T}, J, B; itermax=5, rtol=cbrt(eps(float(T)
         t, converged = armijo_wolfe(ϕϕ′, E0, E0′, maxstep(Δλτ, λτ, typemax(one(eltype(λτ)))))
         # println("Iteration $iter: E = $E0, t = $t")
         converged || break
-        λτ .+= t * Δλτ
+        λτ .+= t .* Δλτ
         iter += 1
     end
     return λτ[begin:end-1], last(λτ)
 end
 
-function dualobjective!(dualg, λτ, h, J, B)
+function dualobjective!(dualg, λτ, h, J, B, Jtλtmp, BdivJtλtmp, Jxtmp)
     λ, τ = @view(λτ[begin:end-1]), last(λτ)
     any(<=(zero(eltype(λ))), λ) && return typemax(eltype(λ))
-    Jtλ = J' * λ
-    BdivJtλ = B \ Jtλ
+    mul!(Jtλtmp, J', λ, true, false)
+    ldiv!(BdivJtλtmp, B, Jtλtmp)
     if dualg !== nothing
-        dualg[begin:end-1] .= h .+ (J * BdivJtλ) .- τ ./ λ
+        mul!(Jxtmp, J, BdivJtλtmp, true, false)
+        dualg[begin:end-1] .= h .+ Jxtmp .- τ ./ λ
         dualg[end] = length(h) * log(τ) - sum(log, λ)
     end
-    return h' * λ + dot(Jtλ, BdivJtλ) / 2 + length(h) * τ * (log(τ) - 1) - τ * sum(log, λ)
+    return h' * λ + dot(Jtλtmp, BdivJtλtmp) / 2 + length(h) * τ * (log(τ) - 1) - τ * sum(log, λ)
 end
 
 # This is copied, with modifications, from SolverTools.jl
