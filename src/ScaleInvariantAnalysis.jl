@@ -158,6 +158,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=10, �
             γ /= (1 + iterbt)
         end
         iterbt == btmax && (γ = zero(γ))
+        iszero(γ) && break
         # println("  γ = $γ, γ0 = $γ0")
         # Update the solution and barrier parameter
         α .+= γ .* top(Δxs)
