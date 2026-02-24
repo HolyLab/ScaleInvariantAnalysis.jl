@@ -100,10 +100,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=1, τ
     cviol = TopBottomVector(r + s, T[])
     Δxs0 = zero(TopBottomVector(xs))
     ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
-    # wslsqr = LsqrWorkspace(KrylovConstructor(gxs, cviol))
-    # wspar = LslqWorkspace(KrylovConstructor(gxs, cviol))
-    # wsperp = LnlqWorkspace(KrylovConstructor(cviol, gxs))
-    gxstmp, Δxspar, Δxsperp, Δxs = similar(gxs), similar(gxs), similar(gxs), similar(gxs)
+    gxstmp, cvioltmp, Δxs = similar(gxs), similar(cviol), similar(gxs)
     xstmp, rtmp = similar(xs), similar(r)
     λνnew, Δλν = TopBottomVector(similar(λ), T[]), TopBottomVector(similar(λ), T[])
     iter = 0
@@ -112,37 +109,19 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=1, τ
         # println("\nIteration $iter:")
         objval = sum(abs2, r) / 2
         gxstmp .= .-gxs
-        # Δxs .= gxstmp
-        # mul!(Δxs, J', λν, -1, true)
-        # ldiv!(H, Δxs)
-        trimr!(ws, J', gxstmp, -cviol, Δxs0, λν; ν=0.0, τ=1.0, M=H, ldiv=true, atol = 0.0, rtol = 10 * sqrt(eps(T))) #, verbose=100) #itmax=2*(length(gxs) + length(cviol)))
+        cvioltmp .= .-cviol
+        trimr!(ws, J', gxstmp, cvioltmp, Δxs0, λν; ν=0.0, τ=1.0, M=H, ldiv=true, atol = 0.0, rtol = 10 * sqrt(eps(T))) #, verbose=100)
         # println("  trimr iter = $(ws.stats.niter), solved = $(ws.stats.solved)")
         Δxs, λνnew = ws.x, ws.y
-        # @show ws.stats.solved
-        # Solve for the Newton step, separating parallel and perpendicular components to the constraint manifold
-        # lsqr!(wslsqr, J', gxstmp; M=H, ldiv=true)
-        # lslq!(wspar, J', gxstmp; M=H, ldiv=true)#, atol=(eps(T))^(1/4))
-        # lnlq!(wsperp, J, cviol; N=H, ldiv=true, rtol=(eps(T))^(1/4)) #, λ=sqrt(eps(eltype(g))))
-        # @show wslsqr.stats.solved wsperp.stats.solved
-        # println("  lslq iter = $(wspar.stats.niter), lnlq iter = $(wsperp.stats.niter)")
-        # λνpar = wspar.x # wslsqr.x
-        # mul!(gxstmp, J', λνpar, -1, true)
-        # ldiv!(Δxspar, H, gxstmp)
-        # Δxsperp .= -1 .* wsperp.x
-        # λνperp = wsperp.y
+        mul!(gxstmp, J', λνnew, -1, true)
         # Compute convergence criteria
-        # δpar = abs(dot(gxstmp, Δxspar))
-        # δperp = dotabs(cviol, λνperp)
         δpar = abs(dot(gxstmp, Δxs))
         δperp = dotabs(cviol, λνnew)
         # @show (δpar, δperp, τ * abs(sum(log, s)), rtol * objval + atol)
         max(δpar, δperp, τ * abs(sum(log, s))) <= rtol * objval + atol && break
 
         # Diagonal backtracking
-        # Δxs .= Δxspar .+ Δxsperp
-        # λνnew .= λνpar .+ λνperp
         Δλν .= λνnew .- λν
-        # merit0 = objval - τ * sum(log, s) + dot(λνpar, cviol) + μ * dotabs(cviol, λνperp)
         merit0 = objval - τ * sum(log, s) + dot(λνnew, cviol) + μ * dotabs(λνnew, cviol)
         γ = γ0 = maxstep(top(Δλν), top(λν), maxstep(bottom(Δxs), bottom(xs)))
         iterbt = 0
@@ -151,7 +130,6 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=1, τ
             residual!(rtmp, logA, top(xstmp), W)
             merit = sum(abs2, rtmp) / 2 - τ * sum(log, bottom(xstmp))
             rtmp .+= bottom(xstmp)
-            # merit += dot(λνpar, rtmp) + μ * dotabs(rtmp, λνperp)
             merit += dot(λνnew, rtmp) + μ * dotabs(λνnew, rtmp)
             merit < merit0 && break
             iterbt += 1
@@ -163,7 +141,6 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=1, τ
         # Update the solution and barrier parameter
         α .+= γ .* top(Δxs)
         s .+= γ .* bottom(Δxs)
-        # λ .= (1 - γ) .* top(λν) .+ γ .* (top(λνpar) .+ top(λνperp))
         λ .= (1 - γ) .* top(λν) .+ γ .* top(λνnew)
         @assert all(>(0), s) && all(>(0), λ) "Nonpositivity of s or λ: s = $s, λ = $λ"
         τ *= sqrt(1 - min(γ, 1 - τminfrac^2))
