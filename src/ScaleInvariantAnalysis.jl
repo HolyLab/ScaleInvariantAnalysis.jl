@@ -65,7 +65,7 @@ function symcover(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
-function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=10, τminfrac = 1//8, rtol=2*sqrt(eps(float(eltype(A)))), atol=0, itermax=max(50, size(A, 1)), btmax=5)
+function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=1, τminfrac = 1//8, rtol=2*sqrt(eps(float(eltype(A)))), atol=0, itermax=max(50, size(A, 1)), btmax=5)
     @assert issymmetric(A)  # will generalize later
     ax = axes(A, 1)
     n = length(ax)
@@ -115,7 +115,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=10, �
         # Δxs .= gxstmp
         # mul!(Δxs, J', λν, -1, true)
         # ldiv!(H, Δxs)
-        trimr!(ws, J', gxstmp, -cviol, Δxs0, λν; ν=0.0, τ=1.0, M=H, ldiv=true, atol = (eps(T))^(1/2) * sqrt(objval))#, verbose=100) #itmax=2*(length(gxs) + length(cviol)))
+        trimr!(ws, J', gxstmp, -cviol, Δxs0, λν; ν=0.0, τ=1.0, M=H, ldiv=true, atol = 0.0, rtol = 10 * sqrt(eps(T))) #, verbose=100) #itmax=2*(length(gxs) + length(cviol)))
         # println("  trimr iter = $(ws.stats.niter), solved = $(ws.stats.solved)")
         Δxs, λνnew = ws.x, ws.y
         # @show ws.stats.solved
@@ -143,7 +143,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=10, �
         # λνnew .= λνpar .+ λνperp
         Δλν .= λνnew .- λν
         # merit0 = objval - τ * sum(log, s) + dot(λνpar, cviol) + μ * dotabs(cviol, λνperp)
-        merit0 = objval - τ * sum(log, s) + μ * dotabs(λνnew, cviol)
+        merit0 = objval - τ * sum(log, s) + dot(λνnew, cviol) + μ * dotabs(λνnew, cviol)
         γ = γ0 = maxstep(top(Δλν), top(λν), maxstep(bottom(Δxs), bottom(xs)))
         iterbt = 0
         while iterbt < btmax
@@ -152,7 +152,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=10, �
             merit = sum(abs2, rtmp) / 2 - τ * sum(log, bottom(xstmp))
             rtmp .+= bottom(xstmp)
             # merit += dot(λνpar, rtmp) + μ * dotabs(rtmp, λνperp)
-            merit += μ * dotabs(λνnew, rtmp)
+            merit += dot(λνnew, rtmp) + μ * dotabs(λνnew, rtmp)
             merit < merit0 && break
             iterbt += 1
             γ /= (1 + iterbt)
