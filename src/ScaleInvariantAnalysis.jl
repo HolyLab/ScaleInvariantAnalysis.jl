@@ -86,7 +86,7 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     α = B \ sumlogA
     r = residual(logA, α, W)
     N = length(r)
-    J = JacLNXS(jopsym(A, N), zeros(T, 0, length(α)))
+    J = JacLNXS(jmatrixsym(A, N), zeros(T, 0, length(α)))
     λ, τ = warmstart(r, J.Ji, B)
     # @show λ τ
     iszero(τ) && return exp.(α)
@@ -95,39 +95,39 @@ function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfra
     xs = XS(α, s)
     λν = LN(λ, T[])
     H = HessXS(B, xs, λν)
+    JM = AbstractMatrix(J)
     g₀ = J.Ji'*r
     gxs = TopBottomVector(g₀, -τ ./ s)
     cviol = TopBottomVector(r + s, T[])
-    # Δxs0 = zero(TopBottomVector(xs))
-    # ws = TrimrWorkspace(KrylovConstructor(gxs, cviol))
-    # wslsqr = LsqrWorkspace(KrylovConstructor(gxs, cviol))
-    wspar = LslqWorkspace(KrylovConstructor(gxs, cviol))
-    wsperp = LnlqWorkspace(KrylovConstructor(cviol, gxs))
+    rhs = zeros(T, length(gxs) + length(cviol))
     gxstmp, Δxspar, Δxsperp, Δxs = similar(gxs), similar(gxs), similar(gxs), similar(gxs)
     xstmp, rtmp = similar(xs), similar(r)
-    λνnew, Δλν = TopBottomVector(similar(λ), T[]), TopBottomVector(similar(λ), T[])
+    λνnew, Δλν, λνpar, λνperp = TopBottomVector(similar(λ), T[]), TopBottomVector(similar(λ), T[]), TopBottomVector(similar(λ), T[]), TopBottomVector(similar(λ), T[])
     iter = 0
     # @show α
     while iter < itermax
         # println("\nIteration $iter:")
+        objval = sum(abs2, r) / 2
+        M = if isa(B, ShermanMorrisonMatrix)
+            unew = vcat(B.u, zeros(T, 2*length(s)))
+            MB = [Diagonal(vcat(B.A.diag, λ ./ s)) JM'; JM spzeros(T, size(J, 1), size(J, 1))]
+            ShermanMorrisonMatrix{T}(MatrixFactorizationBundle(MB, lu(MB)), unew, unew)
+        else
+            MB = [AbstractMatrix(H) JM'; JM spzeros(T, size(J, 1), size(J, 1))]
+            MatrixFactorizationBundle(MB, lu(MB))
+        end
+        rhs[begin:length(gxs)] .= .-gxs
+        rhs[length(gxs)+1:end] .= 0
+        ldiv!(M, rhs)
+        copyto!(Δxspar, @view rhs[begin:length(gxs)])
+        copyto!(λνpar, @view rhs[length(gxs)+1:end])
+        rhs[begin:length(gxs)] .= 0
+        rhs[length(gxs)+1:end] .= .-cviol
+        ldiv!(M, rhs)
+        copyto!(Δxsperp, @view rhs[begin:length(gxs)])
+        copyto!(λνperp, @view rhs[length(gxs)+1:end])
         gxstmp .= .-gxs
-        # Δxs .= gxstmp
-        # mul!(Δxs, J', λν, -1, true)
-        # ldiv!(H, Δxs)
-        # trimr!(ws, J', gxstmp, -cviol, Δxs0, λν; ν=0.0, τ=1.0, M=H, ldiv=true, atol = (eps(T))^(1/4) * sum(abs2, r), verbose=100) #itmax=2*(length(gxs) + length(cviol)))
-        # println("  trimr iter = $(ws.stats.niter), solved = $(ws.stats.solved)")
-        # @show ws.stats.solved
-        # Solve for the Newton step, separating parallel and perpendicular components to the constraint manifold
-        # lsqr!(wslsqr, J', gxstmp; M=H, ldiv=true)
-        lslq!(wspar, J', gxstmp; M=H, ldiv=true)#, atol=(eps(T))^(1/4))
-        lnlq!(wsperp, J, cviol; N=H, ldiv=true, rtol=(eps(T))^(1/4)) #, λ=sqrt(eps(eltype(g))))
-        # @show wslsqr.stats.solved wsperp.stats.solved
-        # println("  lslq iter = $(wspar.stats.niter), lnlq iter = $(wsperp.stats.niter)")
-        λνpar = wspar.x # wslsqr.x
         mul!(gxstmp, J', λνpar, -1, true)
-        ldiv!(Δxspar, H, gxstmp)
-        Δxsperp .= -1 .* wsperp.x
-        λνperp = wsperp.y
         # Compute convergence criteria
         δpar = abs(dot(gxstmp, Δxspar))
         δperp = dotabs(cviol, λνperp)
@@ -260,6 +260,27 @@ function jopsym(A, N)
     end
     S = float(eltype(A))
     return LinearOperator{S,Vector{S}}(N, n, false, false, jmul!, jmult!, jmult!)
+end
+
+function jmatrixsym(A, N)
+    ax = axes(A, 1)
+    n = length(ax)
+    I, J, V = Int[], Int[], float(eltype(A))[]
+    k = 0
+    for j in ax
+        for i in j:last(ax)
+            iszero(A[i, j]) && continue
+            push!(I, k += 1)
+            push!(J, i)
+            push!(V, -(1 + (i == j ? 1 : 2)))
+            if i != j
+                 push!(I, k)
+                 push!(J, j)
+                 push!(V, -1)
+            end
+        end
+    end
+    return sparse(I, J, V, N, n)
 end
 
 function warmstart(r::AbstractVector{T}, J, B; itermax=5, rtol=cbrt(eps(float(T)))) where T<:Real

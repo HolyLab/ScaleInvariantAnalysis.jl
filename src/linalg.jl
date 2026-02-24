@@ -46,3 +46,24 @@ function LinearAlgebra.ldiv!(SM::ShermanMorrisonMatrix, y::AbstractVector)
 end
 
 Base.:(\)(SM::ShermanMorrisonMatrix, x::AbstractVector) = ldiv!(similar(x), SM, x)
+
+struct MatrixFactorizationBundle{T, AT<:AbstractMatrix{T}, F<:Factorization{T}} <: AbstractMatrix{T}
+    A::AT
+    F::F
+end
+Base.size(MFB::MatrixFactorizationBundle) = size(MFB.A)
+Base.IndexStyle(::Type{<:MatrixFactorizationBundle{T,AT}}) where {T,AT<:AbstractMatrix{T}} = IndexStyle(AT)
+Base.getindex(MFB::MatrixFactorizationBundle, i::Int, j::Int) = MFB.A[i, j]
+Base.getindex(MFB::MatrixFactorizationBundle, i::Int) = MFB.A[i]
+
+function LinearAlgebra.mul!(y::AbstractVector, MFB::MatrixFactorizationBundle, x::AbstractVector, α::Number, β::Number)
+    mul!(y, MFB.A, x, α, β)
+    return y
+end
+function LinearAlgebra.ldiv!(MFB::MatrixFactorizationBundle, y::AbstractVector)
+    ldiv!(MFB.F, y)
+    return y
+end
+
+Base.:(*)(MFB::MatrixFactorizationBundle, x::AbstractVector) = mul!(similar(x), MFB, x, true, false)
+Base.:(\)(MFB::MatrixFactorizationBundle, x::AbstractVector) = ldiv!(similar(x), MFB, x)
