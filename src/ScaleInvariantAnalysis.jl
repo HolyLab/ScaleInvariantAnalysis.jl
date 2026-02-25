@@ -65,7 +65,70 @@ function symcover(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
-function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=1, τminfrac = 1//8, rtol=2*sqrt(eps(float(eltype(A)))), atol=0, itermax=max(50, size(A, 1)), btmax=5)
+function symcover_tropical(A::AbstractMatrix; exact::Bool=false, itermax=10, rtol=1e-4, pre=1//2, post=1//2)
+    ax = axes(A, 1)
+    axes(A, 2) == ax || throw(ArgumentError("symcover requires a square matrix"))
+    z = log(oneunit(eltype(A)))
+    logA = [iszero(aij) ? z : log(abs(aij)) for aij in A]
+    nz = vec(sum(!iszero, A; dims=2))
+    sumlogA = vec(sum(logA; dims=2))
+    n = length(ax)
+    T = typeof(z)
+    B = if !exact || all(==(n), nz)
+        u = nz / sqrt(sum(nz))
+        ShermanMorrisonMatrix{T}(Diagonal(nz), u, u)
+    else
+        PDMat(Diagonal(nz) + isnz(A))
+    end
+
+    # Start α at the unconstrained minimizer of the objective function
+    α = B \ sumlogA
+    # function objective(α)
+    #     val = zero(T)
+    #     for j in ax
+    #         for i in j:last(ax)
+    #             iszero(A[i, j]) && continue
+    #             val += (logA[i, j] - α[i] - α[j])^2
+    #         end
+    #     end
+    #     val / 2
+    # end
+    # objval0 = objective(α)
+    iter = 0
+    while iter < itermax
+        maxviol = typemin(T)
+        for j in ax
+            violpre, violpost = maxviolation(logA, α, A, j)
+            Δα = max(pre * violpre, post * violpost)
+            Δα > typemin(T) && (maxviol = abs(Δα))
+            α[j] += Δα
+        end
+        # @show maxviol
+        # abs(maxviol) <= rtol * sqrt(objval0) && break
+        iter += 1
+    end
+    return exp.(α)
+end
+
+function maxviolation(logA, α, A, j)
+    @assert axes(A) == axes(logA)
+    ax = axes(A, 1)
+    @assert eachindex(α) == ax
+    violpre = typemin(eltype(logA))
+    violpost = typemin(eltype(logA))
+    αj = α[j]
+    for i in first(ax):j
+        Aij = A[i, j]
+        violpost = max(violpost, iszero(Aij) ? typemin(eltype(logA)) : logA[i, j] - α[i] - αj)
+    end
+    for i in j+1:last(ax)
+        Aij = A[i, j]
+        violpre = max(violpre, iszero(Aij) ? typemin(eltype(logA)) : logA[i, j] - α[i] - αj)
+    end
+    return violpre, violpost
+end
+
+function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, μ=1, τminfrac = 1//8, rtol=2*sqrt(eps(float(eltype(A)))), atol=0, itermax=50, btmax=5)
     @assert issymmetric(A)  # will generalize later
     ax = axes(A, 1)
     n = length(ax)
