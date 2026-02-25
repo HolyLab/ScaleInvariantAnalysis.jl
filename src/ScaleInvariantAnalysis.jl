@@ -65,6 +65,21 @@ function symcover(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
+function symcover_objective(α, A::AbstractMatrix, logA::AbstractMatrix{T}) where T
+    ax = axes(A, 1)
+    axes(A, 2) == ax || throw(ArgumentError("symcover_objective requires a square matrix"))
+    axes(A) == axes(logA) || throw(ArgumentError("symcover_objective requires logA to have the same shape as A"))
+    val = zero(T)
+    for j in ax
+        αj = α[j]
+        for i in j:last(ax)
+            iszero(A[i, j]) && continue
+            val += (logA[i, j] - α[i] - αj)^2
+        end
+    end
+    val / 2
+end
+
 function symcover_tropical(A::AbstractMatrix; exact::Bool=false, itermax=10, rtol=1e-4, pre=1//2, post=1//2)
     ax = axes(A, 1)
     axes(A, 2) == ax || throw(ArgumentError("symcover requires a square matrix"))
@@ -83,47 +98,44 @@ function symcover_tropical(A::AbstractMatrix; exact::Bool=false, itermax=10, rto
 
     # Start α at the unconstrained minimizer of the objective function
     α = B \ sumlogA
-    # function objective(α)
-    #     val = zero(T)
-    #     for j in ax
-    #         for i in j:last(ax)
-    #             iszero(A[i, j]) && continue
-    #             val += (logA[i, j] - α[i] - α[j])^2
-    #         end
-    #     end
-    #     val / 2
-    # end
-    # objval0 = objective(α)
+    α .= max.(α, diag(logA)/2)
+    objval0 = symcover_objective(α, A, logA)
+    atol = rtol * sqrt(objval0)
     iter = 0
     while iter < itermax
         maxviol = typemin(T)
+        # @show α objval0
+        # display(logA)
+        # display(α .+ α')
         for j in ax
             violpre, violpost = maxviolation(logA, α, A, j)
+            # @show j violpre violpost
             Δα = max(pre * violpre, post * violpost)
-            Δα > typemin(T) && (maxviol = abs(Δα))
+            # abs(Δα) > 1e-8 && @show j violpre violpost Δα
+            Δα > typemin(T) && (maxviol = max(maxviol, abs(Δα)))
             α[j] += Δα
+            # display(α .+ α')
         end
-        # @show maxviol
-        # abs(maxviol) <= rtol * sqrt(objval0) && break
+        # @show α symcover_objective(α, A, logA)
+        abs(maxviol) <= atol && break
+        # iter >= 3 && error("stop")
         iter += 1
     end
     return exp.(α)
 end
 
 function maxviolation(logA, α, A, j)
-    @assert axes(A) == axes(logA)
     ax = axes(A, 1)
-    @assert eachindex(α) == ax
     violpre = typemin(eltype(logA))
     violpost = typemin(eltype(logA))
     αj = α[j]
     for i in first(ax):j
         Aij = A[i, j]
-        violpost = max(violpost, iszero(Aij) ? typemin(eltype(logA)) : logA[i, j] - α[i] - αj)
+        violpre = max(violpre, iszero(Aij) ? typemin(eltype(logA)) : logA[i, j] - α[i] - αj)
     end
     for i in j+1:last(ax)
         Aij = A[i, j]
-        violpre = max(violpre, iszero(Aij) ? typemin(eltype(logA)) : logA[i, j] - α[i] - αj)
+        violpost = max(violpost, iszero(Aij) ? typemin(eltype(logA)) : logA[i, j] - α[i] - αj)
     end
     return violpre, violpost
 end
