@@ -4,6 +4,9 @@ using LinearAlgebra
 using PDMats
 using DifferentiationInterface
 using ForwardDiff
+using JuMP: JuMP, @variable, @objective, @constraint
+using HiGHS: HiGHS
+using Graphs: Graphs, connected_components
 using Test
 
 function test_scaleinv(f, A::AbstractMatrix, p::Int; iter=10, rtol=sqrt(eps(float(eltype(A)))))
@@ -41,6 +44,49 @@ function test_sumlog(A, a, b; rtol=1e-6)
         @test abs(s) ≤ rtol * Aref
     end
 end
+
+function coversym_ref(A)
+    issymmetric(A) || error("Matrix A must be symmetric")
+    α = logcoversym_ref(A, log.(abs.(A)))
+    return exp.(α)
+end
+function logcoversym_ref(A, logA)
+    n = size(A, 1)
+    model = JuMP.Model(HiGHS.Optimizer)
+    JuMP.set_silent(model)
+    @variable(model, α[1:n])
+    @objective(model, Min, sum((logA[i, j] - α[i] - α[j])^2 for i in 1:n for j in 1:n if A[i, j] != 0))
+    for i in 1:n
+        for j in i:n
+            if A[i, j] != 0
+                @constraint(model, logA[i, j] - α[i] - α[j] <= 0)
+            end
+        end
+    end
+    JuMP.optimize!(model)
+    return JuMP.value.(α)
+end
+
+@testset "Patterns" begin
+    valrange = 1:20
+    comps = Dict{Vector{Int}, Matrix{Int}}()
+    for i = 1:1000
+        A = Symmetric([rand(valrange) for _ in 1:5, _ in 1:5])
+        logA = log.(abs.(A))
+        α = logcoversym_ref(A, logA)
+        dA = logA .- α .- α'
+        active = abs.(dA) .< 1e-8
+        g = Graphs.SimpleGraph(active)
+        cc = connected_components(g)
+        l = sort(length.(cc))
+        if !haskey(comps, l)
+            comps[l] = A
+        end
+        length(comps) == 7 && break
+    end
+end
+
+error("stop")
 
 @testset "ScaleInvariantAnalysis.jl" begin
     backend = AutoForwardDiff()
