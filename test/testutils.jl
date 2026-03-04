@@ -1,5 +1,6 @@
 using JuMP: JuMP, @variable, @objective, @constraint
 using HiGHS: HiGHS
+using LinearAlgebra
 
 function coversym_ref(A)
     issymmetric(A) || error("Matrix A must be symmetric")

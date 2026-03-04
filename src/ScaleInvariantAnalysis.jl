@@ -103,19 +103,32 @@ function symcover_tropical(A::AbstractMatrix; exact::Bool=false, itermax=10, rto
     Δα = similar(α)
     g, Δg = similar(Δα), similar(Δα)
     actives = Tuple{Int,Int}[]
+    inactiveidx = Int[]
     while iter < itermax
         # @show sum(abs2, logA .- α .- α') / 2
         Δα .= αstar .- α
+        mul!(g, B, Δα)
         active_constraints!(actives, Δα, α, A, logA, sqrt(eps(T)))
         # @show Δα actives
         # display(logA .- α .- α')
         J = jopsym(actives, n)
-        mul!(g, B, Δα)
         # @show dot(g, Δα)
         # @show g
         λpar, status = lslq(J', g; M=B, ldiv=true)
         # @show status.solved
         status.solved || break
+        empty!(inactiveidx)
+        for i in eachindex(λpar)
+            λpar[i] <= zero(T) && push!(inactiveidx, i)
+        end
+        if !isempty(inactiveidx)
+            println("Removing $(length(inactiveidx)) inactive constraints: $(actives[inactiveidx])")
+            deleteat!(actives, inactiveidx)
+            J = jopsym(actives, n)
+            λpar, status = lslq(J', g; M=B, ldiv=true)
+            status.solved || break
+            @assert all(>=(zero(T)), λpar) "Inactive constraints have negative Lagrange multipliers: $(λpar[inactiveidx])"
+        end
         mul!(g, J', λpar, -1, true)
         # @show g
         ldiv!(Δα, B, g)
