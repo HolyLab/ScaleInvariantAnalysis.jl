@@ -6,30 +6,40 @@ if !isdefined(Main, :logcoversym_ref)
     include("testutils.jl")
 end
 
-valrange = 1:20
-comps = Dict{Vector{Vector{Int}}, Matrix{Int}}()
-for i = 1:10^5
-    A = Symmetric([rand(valrange) for _ in 1:5, _ in 1:5])
+function accumulate_examples_symmetric!(comps, A, model, αvariable, ps)
     logA = log.(abs.(A))
+    logcoversym_ref_reset!(ps, logA)
     α = try
-            logcoversym_ref(A, logA)
+            JuMP.optimize!(model)
+            JuMP.value.(αvariable)
         catch err
             @warn "Optimization failed for matrix $A: $err"
-            continue
+            return
         end
     dA = logA .- α .- α'
     active = abs.(dA) .< 1e-8
     g = NautyGraph(active)
-    canonize!(g)
-    cc = connected_components(g)
-    if !haskey(comps, cc)
-        comps[cc] = A
+    p = canonize!(g)
+    edges = Tuple{Int,Int}[]
+    for e in Graphs.edges(g)
+        push!(edges, (min(e.src, e.dst), max(e.src, e.dst)))
     end
-    length(comps) == 24 && break  # there are 24 distinct patterns for 5x5 symmetric matrices
+    if !haskey(comps, edges)
+        comps[edges] = A[p, p]
+    end
+end
+
+valrange = 1:20
+comps = Dict{Vector{Tuple{Int,Int}}, Matrix{Int}}()
+Adummy = Symmetric([rand(valrange) for _ in 1:5, _ in 1:5])
+model, αvariable, ps = logcoversym_ref_setup(log.(abs.(Adummy)))
+for i = 1:10^5
+    A = Symmetric([rand(valrange) for _ in 1:5, _ in 1:5])
+    accumulate_examples_symmetric!(comps, A, model, αvariable, ps)
 end
 
 open("testmatrices.jl", "w") do io
-    ccomps = sort(collect(comps), by = x -> length.(x[1]))
+    ccomps = sort(collect(comps), by = x -> x[1])
     println(io, "const symmetric_matrices = [")
     for (cc, A) in ccomps
         println(io, "    $(repr(cc)) => $(repr(A)),")
