@@ -65,6 +65,151 @@ function symcover(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
+function symcover_tropical(A::AbstractMatrix; exact::Bool=false, itermax=10, rtol=1e-4, pre=1//2, post=1//2)
+    ax = axes(A, 1)
+    axes(A, 2) == ax || throw(ArgumentError("symcover requires a square matrix"))
+    z = log(oneunit(eltype(A)))
+    logA = [iszero(aij) ? z : log(abs(aij)) for aij in A]
+    nz = vec(sum(!iszero, A; dims=2))
+    sumlogA = vec(sum(logA; dims=2))
+    n = length(ax)
+    T = typeof(z)
+    B = if !exact || all(==(n), nz)
+        u = nz / sqrt(sum(nz))
+        ShermanMorrisonMatrix{T}(Diagonal(nz), u, u)
+    else
+        PDMat(Diagonal(nz) + isnz(A))
+    end
+
+    # Start α at the unconstrained minimizer of the objective function
+    α = αstar = B \ sumlogA
+    # Make it feasible
+    α = max.(α, diag(logA)/2)
+    @assert !(α === αstar) "Unconstrained minimizer is already feasible"
+    for j in ax
+        for i in j+1:last(ax)
+            iszero(A[i, j]) && continue
+            Δa = logA[i, j] - α[i] - α[j]
+            if Δa > zero(T)
+                α[i] += nextfloat(Δa)/2
+                α[j] += nextfloat(Δa)/2
+            end
+        end
+    end
+    @assert symcover_feasible(α, A, logA)
+    # Step back towards the unconstrained minimizer until we hit the boundary of the feasible region
+    iter = 0
+    Δα = similar(α)
+    g = similar(Δα)
+    actives = Tuple{Int,Int}[]
+    while iter < itermax
+        Δα .= αstar .- α
+        active_constraints!(actives, Δα, α, A, logA, sqrt(eps(T)))
+        @show Δα actives
+        @show iter
+        length(actives) == 5 && deleteat!(actives, 2)
+        @show actives
+        display(logA .- α .- α')
+        J = jopsym(actives, n)
+        mul!(g, B, Δα)
+        @show g
+        λpar, status = lslq(J', g; M=B, ldiv=true)
+        @show status.solved
+        status.solved || break
+        mul!(g, J', λpar, -1, true)
+        @show g
+        ldiv!(Δα, B, g)
+        @show Δα
+        α + Δα ≈ α && break
+        γ = symcover_maxstep(Δα, α, A, logA)
+        @show γ Δα
+        γ <= rtol && break
+        α .+= prevfloat(γ) .* Δα
+        # symcover_feasible(α, A, logA) || error("symcover_tropical produced an infeasible iterate, $α")
+        iter += 1
+    end
+    iter < itermax || @warn "symcover_tropical did not converge within $itermax iterations"
+    return exp.(α)
+end
+
+function symcover_feasible(α, A, logA)
+    ax = axes(A, 1)
+    for j in ax
+        for i in j:last(ax)
+            iszero(A[i, j]) && continue
+            if logA[i, j] - α[i] - α[j] > 0
+                return false
+            end
+        end
+    end
+    return true
+end
+
+# Compute the maximum step length along Δα that maintains feasibility
+function symcover_maxstep(Δα, α, A, logA; rtol=sqrt(eps(eltype(α))), atol=rtol * maximum(abs, Δα))
+    isneg(x) = x <= -atol
+
+    γ = typemax(eltype(α))
+    ax = axes(A, 1)
+    for j in ax
+        Δαj = Δα[j]
+        for i in j:last(ax)
+            iszero(A[i, j]) && continue
+            Δαi = Δα[i]
+            isneg(Δαi + Δαj) || continue
+            γ = min(γ, (logA[i, j] - α[i] - α[j]) / (Δαi + Δαj))
+        end
+    end
+    return γ
+end
+
+function active_constraints!(actives, Δα, α, A, logA, δ)
+    empty!(actives)
+    ax = axes(A, 1)
+    for j in ax
+        for i in j:last(ax)
+            iszero(A[i, j]) && continue
+            Δαi = Δα[i]
+            Δαj = Δα[j]
+            if logA[i, j] - (α[i] + δ * Δαi) - (α[j] + δ * Δαj) > 0
+                push!(actives, (i, j))
+            end
+        end
+    end
+    return actives
+end
+
+function symcover_project!(Δα, A, logA, α, δ)
+    # Remove the components of Δα that would violate the constraints logA[i, j] - α[i] - α[j] ≤ 0
+    ax = axes(A, 1)
+    n = length(ax)
+    for j in ax
+        for i in j:last(ax)
+            iszero(A[i, j]) && continue
+            Δαi = Δα[i]
+            Δαj = Δα[j]
+            # (iszero(Δαi) || iszero(Δαj)) && continue
+            if logA[i, j] - (α[i] + δ * Δαi) - (α[j] + δ * Δαj) > 0
+                # This constraint is active, ensure that J[k, :] * Δα = 0 for the corresponding row k of the Jacobian matrix J
+                @show (i, j)
+                # Project onto the hyperplane defined by logA[i, j] - α[i] - α[j] = 0
+                # The normal vector to this hyperplane is e_i + e_j, where e_i is the i-th standard basis vector
+                # The projection of a vector v onto this hyperplane is given by:
+                #   v_proj = v - ((v ⋅ n) / (n ⋅ n)) * n
+                # where n is the normal vector and v is the vector being projected
+                n_vec = zeros(eltype(Δα), n)
+                n_vec[i] = 1
+                n_vec[j] = 1
+                v_dot_n = Δαi + Δαj
+                n_dot_n = 2
+                projection = (v_dot_n / n_dot_n) * n_vec
+                Δα .-= projection
+                @show Δα
+            end
+        end
+    end
+end
+
 function symcover_barrier(A::AbstractMatrix; exact::Bool=false, τ=1.0, τminfrac = 1//8, rtol=sqrt(eps(float(eltype(A)))), atol=0, itermax=max(50, size(A, 1)), btmax=5)
     @assert issymmetric(A)  # will generalize later
     ax = axes(A, 1)
@@ -220,7 +365,41 @@ function residual(logA, α::AbstractVector, β::AbstractVector, W::AbstractMatri
     return residual!(Vector{T}(undef, N), logA, α, β, W)
 end
 
-function jopsym(A, N)
+function jopsym(actives::AbstractVector{Tuple{Int,Int}}, n::Int)
+    function jmul!(out::AbstractVector{T}, v, α, β) where T    # mul!(out, J, v, α, β)
+        if iszero(β)
+            fill!(out, zero(T))
+        elseif β != 1
+            out .*= β
+        end
+        k = 0
+        for (i, j) in actives
+            out[k += 1] -= α * (v[i] + v[j])
+        end
+        @assert k == length(out)
+        return out
+    end
+    function jmult!(out::AbstractVector{T}, v, α, β) where T    # mul!(out, J', v, α, β)
+        if iszero(β)
+            fill!(out, zero(T))
+        elseif β != 1
+            out .*= β
+        end
+        k = 0
+        for (i, j) in actives
+            k += 1
+            vk = α * v[k]
+            out[i] -= vk
+            out[j] -= vk
+        end
+        @assert k == length(v)
+        return out
+    end
+    S = Float64   # FIXME
+    return LinearOperator{S,Vector{S}}(length(actives), n, false, false, jmul!, jmult!, jmult!)
+end
+
+function jopsym(A::AbstractMatrix, N::Int)
     ax = axes(A, 1)
     n = length(ax)
     function jmul!(out::AbstractVector{T}, v, α, β) where T    # mul!(out, J, v, α, β)

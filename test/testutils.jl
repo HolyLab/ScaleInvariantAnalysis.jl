@@ -20,6 +20,5 @@ function logcoversym_ref(A, logA)
         end
     end
     JuMP.optimize!(model)
-    @show JuMP.termination_status(model)
     return JuMP.value.(α)
 end
