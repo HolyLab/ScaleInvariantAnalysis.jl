@@ -96,48 +96,56 @@ function symcover_tropical(A::AbstractMatrix; exact::Bool=false, itermax=10, rto
             end
         end
     end
-    @assert symcover_feasible(α, A, logA)
+    ϵfeasible = cbrt(eps(T))^2
+    @assert symcover_feasible(α, A, logA, ϵfeasible)
     # Step back towards the unconstrained minimizer until we hit the boundary of the feasible region
     iter = 0
     Δα = similar(α)
-    g = similar(Δα)
+    g, Δg = similar(Δα), similar(Δα)
     actives = Tuple{Int,Int}[]
     while iter < itermax
+        # @show sum(abs2, logA .- α .- α') / 2
         Δα .= αstar .- α
         active_constraints!(actives, Δα, α, A, logA, sqrt(eps(T)))
-        @show Δα actives
-        @show iter
-        length(actives) == 5 && deleteat!(actives, 2)
-        @show actives
-        display(logA .- α .- α')
+        # @show Δα actives
+        # display(logA .- α .- α')
         J = jopsym(actives, n)
         mul!(g, B, Δα)
-        @show g
+        # @show dot(g, Δα)
+        # @show g
         λpar, status = lslq(J', g; M=B, ldiv=true)
-        @show status.solved
+        # @show status.solved
         status.solved || break
         mul!(g, J', λpar, -1, true)
-        @show g
+        # @show g
         ldiv!(Δα, B, g)
-        @show Δα
+        # @show Δα
         α + Δα ≈ α && break
         γ = symcover_maxstep(Δα, α, A, logA)
-        @show γ Δα
+        # @show γ Δα
         γ <= rtol && break
-        α .+= prevfloat(γ) .* Δα
-        # symcover_feasible(α, A, logA) || error("symcover_tropical produced an infeasible iterate, $α")
+        # Compute optimal step length along Δα
+        # mul!(g, B, α)
+        # mul!(Δg, B, Δα)
+        # γstar = - (dot(g, Δα) - dot(sumlogA, Δα)) / dot(Δg, Δα)
+        # @show γstar
+        # γstar >= zero(T) || break
+        # α .+= min(γ, γstar) .* Δα
+        α .+= min(γ, 1) .* Δα   # the optimal step length is always 1, because we computed Δα from g and the result of lslq
+        # symcover_feasible(α, A, logA, ϵfeasible) || display(logA .- α .- α')
+        symcover_feasible(α, A, logA, ϵfeasible) || error("symcover_tropical produced an infeasible iterate, $α")
         iter += 1
     end
     iter < itermax || @warn "symcover_tropical did not converge within $itermax iterations"
     return exp.(α)
 end
 
-function symcover_feasible(α, A, logA)
+function symcover_feasible(α, A, logA, rtol)
     ax = axes(A, 1)
     for j in ax
         for i in j:last(ax)
             iszero(A[i, j]) && continue
-            if logA[i, j] - α[i] - α[j] > 0
+            if logA[i, j] - α[i] - α[j] > rtol * (abs(logA[i, j]) + abs(α[i]) + abs(α[j]))
                 return false
             end
         end
