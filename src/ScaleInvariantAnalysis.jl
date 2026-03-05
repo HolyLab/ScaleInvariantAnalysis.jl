@@ -3,7 +3,7 @@ module ScaleInvariantAnalysis
 using LinearAlgebra
 using SparseArrays
 
-export condscale, divmag, dotabs, matrixscale, symscale
+export condscale, divmag, dotabs, matrixcover, matrixscale, symscale
 
 include("utils.jl")
 
@@ -57,6 +57,43 @@ function symscale(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     W = isnz(A)
     divsafe!(sumlogA, vec(sum(W; dims=2)); sentinel=-1/τ)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
+end
+
+"""
+    a, b = matrixcover(A; iter=3)
+
+Given a matrix `A`, return vectors `a` and `b` such that `a[i] * b[j] >= abs(A[i, j])`
+for all `i`, `j`. The result is an approximate solution computed by iterative
+refinement; increasing `iter` may produce a tighter cover.
+"""
+function matrixcover(A::AbstractMatrix; iter::Int=3)
+    Base.require_one_based_indexing(A)
+    m, n = size(A)
+    a = vec(sqrt.(maximum(abs, A; dims=2)))
+    b = vec(sqrt.(maximum(abs, A; dims=1)))
+    T = eltype(a)
+    aratio = fill(typemax(T), m)
+    bratio = fill(typemax(T), n)
+    for _ in 1:iter
+        fill!(aratio, typemax(T))
+        fill!(bratio, typemax(T))
+        for j in 1:n
+            for i in 1:m
+                Aij = abs(A[i, j])
+                iszero(Aij) && continue
+                r = a[i] * b[j] / Aij
+                aratio[i] = min(aratio[i], r)
+                bratio[j] = min(bratio[j], r)
+            end
+        end
+        for i in 1:m
+            a[i] /= sqrt(aratio[i])
+        end
+        for j in 1:n
+            b[j] /= sqrt(bratio[j])
+        end
+    end
+    return a, b
 end
 
 """

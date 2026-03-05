@@ -63,6 +63,22 @@ end
     @test a ≈ [1, 0]
     @test b ≈ [1, 0]
 
+    # matrixcover: a[i]*b[j] >= abs(A[i,j]) for all i, j
+    for A in ([2.0 1.0; 1.0 3.0], [0.0 1.0; -2.0 0.0], [1.0 0; 0 0])
+        a, b = matrixcover(A)
+        @test all(a[i] * b[j] >= abs(A[i, j]) - 1e-12 for i in axes(A,1), j in axes(A,2))
+    end
+    # zero-row / zero-column entries should give zero scale
+    a, b = matrixcover([1.0 0; 0 0])
+    @test b[2] == 0
+    # cover is tighter than naive row/column maxima on an asymmetric matrix
+    A = [100.0 1.0; 1.0 0.01]
+    a_naive = vec(sqrt.(maximum(abs, A; dims=2)))
+    b_naive = vec(sqrt.(maximum(abs, A; dims=1)))
+    a, b = matrixcover(A)
+    @test maximum(a[i]*b[j]/abs(A[i,j]) for i in 1:2, j in 1:2) <
+          maximum(a_naive[i]*b_naive[j]/abs(A[i,j]) for i in 1:2, j in 1:2)
+
     @test condscale([1 0; 0 1e-8]) ≈ 1
     A = [1.0 -0.2; -0.2 0]
     b = [0.75, 7.0]
