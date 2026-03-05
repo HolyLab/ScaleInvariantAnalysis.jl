@@ -3,7 +3,7 @@ module ScaleInvariantAnalysis
 using LinearAlgebra
 using SparseArrays
 
-export condscale, divmag, dotabs, matrixcover, matrixscale, symscale
+export condscale, cover_balanced, cover_tight, divmag, dotabs, matrixscale, symscale
 
 include("utils.jl")
 
@@ -60,18 +60,25 @@ function symscale(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
 end
 
 """
-    a, b = matrixcover(A; iter=3)
+    a, b = cover_tight(A; iter=3)
 
 Given a matrix `A`, return vectors `a` and `b` such that `a[i] * b[j] >= abs(A[i, j])`
-for all `i`, `j`. The result is an approximate solution computed by iterative
-refinement; increasing `iter` may produce a tighter cover.
+for all `i`, `j` (zero entries of `A` are unconstrained). The result is computed by
+iterative tightening with no logarithm computations; increasing `iter` may produce a
+tighter cover.
 """
-function matrixcover(A::AbstractMatrix; iter::Int=3)
+function cover_tight(A::AbstractMatrix; kwargs...)
     Base.require_one_based_indexing(A)
     m, n = size(A)
     a = vec(sqrt.(maximum(abs, A; dims=2)))
     b = vec(sqrt.(maximum(abs, A; dims=1)))
+    return tighten_cover!(a, b, A; kwargs...)
+
+end
+
+function tighten_cover!(a, b, A; iter::Int=3)
     T = eltype(a)
+    m, n = size(A)
     aratio = fill(typemax(T), m)
     bratio = fill(typemax(T), n)
     for _ in 1:iter
@@ -93,6 +100,49 @@ function matrixcover(A::AbstractMatrix; iter::Int=3)
             b[j] /= sqrt(bratio[j])
         end
     end
+    return a, b
+end
+
+"""
+    a, b = cover_balanced(A)
+
+Given a matrix `A`, return vectors `a` and `b` such that `a[i] * b[j] >= abs(A[i, j])`
+for all `i`, `j` (zero entries of `A` are unconstrained). The result approximately
+minimizes the sum of squared log-domain excesses `∑ log(a[i]*b[j]/|A[i,j]|)²` over
+nonzero entries.
+
+The algorithm uses the same row/column log-sum computation as [`matrixscale`](@ref) to
+find the unconstrained log-domain L2 optimum, then shifts it uniformly into the feasible
+region. This costs one pass of logarithm computations but requires no iteration.
+"""
+function cover_balanced(A::AbstractMatrix; kwargs...)
+    Base.require_one_based_indexing(A)
+    ax1, ax2 = axes(A, 1), axes(A, 2)
+    (s, ns), (t, mt) = _matrixscale(A, ax1, ax2)
+    m, n = length(ax1), length(ax2)
+    z = sum(ns)
+    iszero(z) && return zeros(eltype(s), m), zeros(eltype(t), n)
+    offset = sum(s) / (2z)
+    divsafe!(s, ns)
+    divsafe!(t, mt)
+    a = exp.(s ./ ns .- offset)
+    b = exp.(t ./ mt .- offset)
+    # Find the worst constraint violation without further log computations
+    rmax = zero(eltype(a))
+    for j in 1:n
+        for i in 1:m
+            Aij = abs(A[i, j])
+            iszero(Aij) && continue
+            rmax = max(rmax, Aij / (a[i] * b[j]))
+        end
+    end
+    # Shift a and b uniformly (log-domain shift of log(rmax)/2 each)
+    if rmax > 1
+        factor = sqrt(rmax)
+        a .*= factor
+        b .*= factor
+    end
+    tighten_cover!(a, b, A; kwargs...)
     return a, b
 end
 
