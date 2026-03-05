@@ -2,6 +2,7 @@ module ScaleInvariantAnalysis
 
 using LinearAlgebra
 using SparseArrays
+using LoopVectorization
 
 export condscale, cover_balanced, cover_tight, divmag, dotabs, matrixscale, symscale
 
@@ -69,34 +70,43 @@ tighter cover.
 """
 function cover_tight(A::AbstractMatrix; kwargs...)
     Base.require_one_based_indexing(A)
-    m, n = size(A)
-    a = vec(sqrt.(maximum(abs, A; dims=2)))
-    b = vec(sqrt.(maximum(abs, A; dims=1)))
+    T = float(eltype(A))
+    a, b = zeros(T, axes(A, 1)), zeros(T, axes(A, 2))
+    @turbo for j in axes(A, 2)
+        bj = zero(T)
+        for i in axes(A, 1)
+            sqrtAij = sqrt(abs(A[i, j]))
+            a[i] = max(a[i], sqrtAij)
+            bj = max(bj, sqrtAij)
+        end
+        b[j] = bj
+    end
     return tighten_cover!(a, b, A; kwargs...)
-
 end
 
 function tighten_cover!(a, b, A; iter::Int=3)
     T = eltype(a)
-    m, n = size(A)
-    aratio = fill(typemax(T), m)
-    bratio = fill(typemax(T), n)
+    aratio = fill(typemax(T), eachindex(a))
+    bratio = fill(typemax(T), eachindex(b))
+    eachindex(a) == axes(A, 1) || throw(DimensionMismatch("indices of a must match row-indexing of A"))
+    eachindex(b) == axes(A, 2) || throw(DimensionMismatch("indices of b must match column-indexing of A"))
     for _ in 1:iter
         fill!(aratio, typemax(T))
         fill!(bratio, typemax(T))
-        for j in 1:n
-            for i in 1:m
+        @turbo for j in eachindex(b)
+            bratioj, bj = bratio[j], b[j]
+            for i in eachindex(a)
                 Aij = abs(A[i, j])
-                iszero(Aij) && continue
-                r = a[i] * b[j] / Aij
+                r = a[i] * bj / Aij
                 aratio[i] = min(aratio[i], r)
-                bratio[j] = min(bratio[j], r)
+                bratioj = min(bratioj, r)
             end
+            bratio[j] = bratioj
         end
-        for i in 1:m
+        for i in eachindex(a)
             a[i] /= sqrt(aratio[i])
         end
-        for j in 1:n
+        for j in eachindex(b)
             b[j] /= sqrt(bratio[j])
         end
     end
@@ -129,10 +139,9 @@ function cover_balanced(A::AbstractMatrix; kwargs...)
     b = exp.(t ./ mt .- offset)
     # Find the worst constraint violation without further log computations
     rmax = zero(eltype(a))
-    for j in 1:n
+    @turbo for j in 1:n
         for i in 1:m
             Aij = abs(A[i, j])
-            iszero(Aij) && continue
             rmax = max(rmax, Aij / (a[i] * b[j]))
         end
     end

@@ -16,17 +16,18 @@ function _symscale(A, ax)
 end
 
 function _matrixscale(A, ax1, ax2)
-    sumlogA1, nz1 = fill!(similar(A, Float64, ax1), 0), fill!(similar(A, Int, ax1), 0)
-    sumlogA2, nz2 = fill!(similar(A, Float64, ax2), 0), fill!(similar(A, Int, ax2), 0)
-    for j in ax2
+    T = float(eltype(A))
+    sumlogA1, nz1 = fill!(similar(A, T, ax1), zero(T)), fill!(similar(A, Int, ax1), 0)
+    sumlogA2, nz2 = fill!(similar(A, T, ax2), zero(T)), fill!(similar(A, Int, ax2), 0)
+    @turbo for j in ax2
         for i in ax1
             Aij = abs(A[i, j])
-            iszero(Aij) && continue
-            logAij = log(Aij)
+            isz = iszero(Aij)
+            logAij = isz ? zero(T) : log(Aij)
             sumlogA1[i] += logAij
-            nz1[i] += 1
+            nz1[i] += !isz
             sumlogA2[j] += logAij
-            nz2[j] += 1
+            nz2[j] += !isz
         end
     end
     return (sumlogA1, nz1), (sumlogA2, nz2)
