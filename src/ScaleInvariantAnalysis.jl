@@ -75,12 +75,14 @@ function cover_tight(A::AbstractMatrix; kwargs...)
     @turbo for j in axes(A, 2)
         bj = zero(T)
         for i in axes(A, 1)
-            sqrtAij = sqrt(abs(A[i, j]))
-            a[i] = max(a[i], sqrtAij)
-            bj = max(bj, sqrtAij)
+            Aij = abs(A[i, j])
+            a[i] = max(a[i], Aij)
+            bj = max(bj, Aij)
         end
         b[j] = bj
     end
+    map!(sqrt, a)
+    map!(sqrt, b)
     return tighten_cover!(a, b, A; kwargs...)
 end
 
@@ -103,12 +105,8 @@ function tighten_cover!(a, b, A; iter::Int=3)
             end
             bratio[j] = bratioj
         end
-        for i in eachindex(a)
-            a[i] /= sqrt(aratio[i])
-        end
-        for j in eachindex(b)
-            b[j] /= sqrt(bratio[j])
-        end
+        a ./= sqrt.(aratio)
+        b ./= sqrt.(bratio)
     end
     return a, b
 end
@@ -138,19 +136,21 @@ function cover_balanced(A::AbstractMatrix; kwargs...)
     a = exp.(s ./ ns .- offset)
     b = exp.(t ./ mt .- offset)
     # Find the worst constraint violation without further log computations
-    rmax = zero(eltype(a))
-    @turbo for j in 1:n
-        for i in 1:m
+    T = eltype(a)
+    aratio = fill(typemin(T), eachindex(a))
+    bratio = fill(typemin(T), eachindex(b))
+    @turbo for j in eachindex(b)
+        bratioj, bj = bratio[j], b[j]
+        for i in eachindex(a)
             Aij = abs(A[i, j])
-            rmax = max(rmax, Aij / (a[i] * b[j]))
+            r = Aij / (a[i] * bj)
+            aratio[i] = max(aratio[i], r)
+            bratioj = max(bratioj, r)
         end
+        bratio[j] = bratioj
     end
-    # Shift a and b uniformly (log-domain shift of log(rmax)/2 each)
-    if rmax > 1
-        factor = sqrt(rmax)
-        a .*= factor
-        b .*= factor
-    end
+    a .*= sqrt.(aratio)
+    b .*= sqrt.(bratio)
     tighten_cover!(a, b, A; kwargs...)
     return a, b
 end

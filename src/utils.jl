@@ -23,7 +23,7 @@ function _matrixscale(A, ax1, ax2)
         for i in ax1
             Aij = abs(A[i, j])
             isz = iszero(Aij)
-            logAij = isz ? zero(T) : log(Aij)
+            logAij = log(Aij + isz)
             sumlogA1[i] += logAij
             nz1[i] += !isz
             sumlogA2[j] += logAij
