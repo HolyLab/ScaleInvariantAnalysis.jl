@@ -7,7 +7,7 @@ using LinearOperators
 using Krylov
 using PDMats
 
-export condscale, divmag, dotabs, cover, symcover
+export condscale, divmag, dotabs, cover, symcover, symcover_greedy
 
 include("linalg.jl")
 include("utils.jl")
@@ -65,11 +65,70 @@ function symcover(A::AbstractMatrix; exact::Bool=false, regularize::Bool=false)
     return exp.(cholesky(Diagonal(nz) + isnz(A) + τ * I) \ sumlogA)
 end
 
+function symcover_greedy(A::AbstractMatrix)
+    ax = axes(A, 1)
+    axes(A, 2) == ax || throw(ArgumentError("symcover requires a square matrix"))
+    a = similar(A, float(eltype(A)), ax)
+    for j in ax
+        a[j] = sqrt(abs(A[j, j]))
+    end
+    # Iterate over the diagonals of A, and update a[i] and a[j] to satisfy |A[i, j]| ≤ a[i] * a[j] whenever this constraint is violated
+    # Iterating over the diagonals gives a more "balanced" result and typically results in lower loss than iterating in a triangular pattern.
+    for k in 1:length(ax)-1
+        for j in first(ax):last(ax)-k
+            i = j + k
+            Aij, ai, aj = abs(A[i, j]), a[i], a[j]
+            if iszero(aj)
+                if !iszero(ai)
+                    a[j] = Aij / ai
+                end
+            elseif iszero(ai)
+                a[i] = Aij / aj
+            else
+                aprod = ai * aj
+                aprod >= Aij && continue
+                s = sqrt(Aij / sqrt(aprod))
+                a[i] = s * ai
+                a[j] = s * aj
+            end
+        end
+    end
+    return a
+end
+
+function cover_greedy(A::AbstractMatrix)
+    ax1, ax2 = axes(A)
+    a = similar(A, float(eltype(A)), ax1)
+    b = similar(A, float(eltype(A)), ax2)
+    na, nb = fill!(similar(a, Int), 0), fill!(similar(b, Int), 0)
+    # Count the nonzeros. (To get started, we'll want to pick a row/column with the fewest nonzeros.)
+    for j in ax2
+        for i in ax1
+            !iszero(A[i, j]) && (na[i] += 1; nb[j] += 1)
+        end
+    end
+    imx, jmx = argmax(na), argmax(nb)
+    ir, jr = na[imx] / length(ax2), nb[jmx] / length(ax1)
+    # The problem is invariant under transformations a -> c*a, b -> b/c, so begin by setting one element to 1 and building the rest around it. We can rebalance at the end if desired.
+    if ir >= jr
+        b[imx] = 1    # start
+        for i in ax1
+            a[i] = abs(A[i, imx])
+        end
+    else
+        a[jmx] = 1    # start
+        for j in ax2
+            b[j] = abs(A[jmx, j])
+        end
+    end
+
+end
+
 function symcover_tropical(A::AbstractMatrix; exact::Bool=false, itermax=10, rtol=1e-4, pre=1//2, post=1//2)
     ax = axes(A, 1)
     axes(A, 2) == ax || throw(ArgumentError("symcover requires a square matrix"))
     z = log(oneunit(eltype(A)))
-    logA = [iszero(aij) ? z : log(abs(aij)) for aij in A]
+    logA = logabs_each(A, z)
     nz = vec(sum(!iszero, A; dims=2))
     sumlogA = vec(sum(logA; dims=2))
     n = length(ax)
@@ -85,14 +144,15 @@ function symcover_tropical(A::AbstractMatrix; exact::Bool=false, itermax=10, rto
     α = αstar = B \ sumlogA
     # Make it feasible
     α = max.(α, diag(logA)/2)
-    @assert !(α === αstar) "Unconstrained minimizer is already feasible"
+    @assert !(α === αstar) "α should be decoupled from αstar"   # prevent well-meaning changes that break the code
     for j in ax
         for i in j+1:last(ax)
             iszero(A[i, j]) && continue
             Δa = logA[i, j] - α[i] - α[j]
             if Δa > zero(T)
-                α[i] += nextfloat(Δa)/2
-                α[j] += nextfloat(Δa)/2
+                halfΔa = nextfloat(Δa / 2)
+                α[i] += halfΔa
+                α[j] += halfΔa
             end
         end
     end
@@ -117,18 +177,18 @@ function symcover_tropical(A::AbstractMatrix; exact::Bool=false, itermax=10, rto
         λpar, status = lslq(J', g; M=B, ldiv=true)
         # @show status.solved
         status.solved || break
-        empty!(inactiveidx)
-        for i in eachindex(λpar)
-            λpar[i] <= zero(T) && push!(inactiveidx, i)
-        end
-        if !isempty(inactiveidx)
-            println("Removing $(length(inactiveidx)) inactive constraints: $(actives[inactiveidx])")
-            deleteat!(actives, inactiveidx)
-            J = jopsym(actives, n)
-            λpar, status = lslq(J', g; M=B, ldiv=true)
-            status.solved || break
-            @assert all(>=(zero(T)), λpar) "Inactive constraints have negative Lagrange multipliers: $(λpar[inactiveidx])"
-        end
+        # empty!(inactiveidx)
+        # for i in eachindex(λpar)
+        #     λpar[i] <= zero(T) && push!(inactiveidx, i)
+        # end
+        # if !isempty(inactiveidx)
+        #     println("Removing $(length(inactiveidx)) inactive constraints: $(actives[inactiveidx])")
+        #     deleteat!(actives, inactiveidx)
+        #     J = jopsym(actives, n)
+        #     λpar, status = lslq(J', g; M=B, ldiv=true)
+        #     status.solved || break
+        #     @assert all(>=(zero(T)), λpar) "Inactive constraints have negative Lagrange multipliers: $(λpar[inactiveidx])"
+        # end
         mul!(g, J', λpar, -1, true)
         # @show g
         ldiv!(Δα, B, g)
@@ -149,9 +209,20 @@ function symcover_tropical(A::AbstractMatrix; exact::Bool=false, itermax=10, rto
         symcover_feasible(α, A, logA, ϵfeasible) || error("symcover_tropical produced an infeasible iterate, $α")
         iter += 1
     end
-    iter < itermax || @warn "symcover_tropical did not converge within $itermax iterations"
+    # iter < itermax || @warn "symcover_tropical did not converge within $itermax iterations"
     return exp.(α)
 end
+
+function logabs_each(A, sentinel)
+    logA = similar_nowrapper(A, promote_type(float(eltype(A)), typeof(sentinel)))
+    for i in eachindex(A, logA)
+        Ai = A[i]
+        logA[i] = iszero(Ai) ? sentinel : log(abs(Ai))
+    end
+    return logA
+end
+similar_nowrapper(A, T) = similar(A, T)
+similar_nowrapper(A::Union{Symmetric,Hermitian}, T) = similar(A.data, T)
 
 function symcover_feasible(α, A, logA, rtol)
     ax = axes(A, 1)
