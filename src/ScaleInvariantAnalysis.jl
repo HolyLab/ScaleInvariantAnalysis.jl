@@ -81,8 +81,8 @@ function cover_tight(A::AbstractMatrix; kwargs...)
         end
         b[j] = bj
     end
-    map!(sqrt, a)
-    map!(sqrt, b)
+    map!(sqrt, a, a)
+    map!(sqrt, b, b)
     return tighten_cover!(a, b, A; kwargs...)
 end
 
