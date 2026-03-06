@@ -3,7 +3,8 @@ using HiGHS: HiGHS
 using LinearAlgebra
 import ParametricOptInterface as POI
 
-function logcoversym_ref_setup(logA)
+# This version is safe only if A has no zeros
+function logsymcover_ref_setup(logA)
     n = size(logA, 1)
     model = JuMP.Model(() -> POI.Optimizer(HiGHS.Optimizer))
     JuMP.set_silent(model)
@@ -18,7 +19,25 @@ function logcoversym_ref_setup(logA)
     return model, α, ps
 end
 
-function logcoversym_ref_reset!(ps, logA)
+function logsymcover_ref(logA, A)
+    n = size(logA, 1)
+    model = JuMP.Model(HiGHS.Optimizer)
+    JuMP.set_silent(model)
+    @variable(model, α[1:n])
+    @objective(model, Min, sum(abs2, α[i] + α[j] - logA[i, j] for i in 1:n, j in 1:n if !iszero(A[i, j])))
+    for i in 1:n
+        for j in i:n
+            if iszero(A[i, j])
+                continue
+            end
+            @constraint(model, α[i] + α[j] - logA[i, j] >= 0)
+        end
+    end
+    JuMP.optimize!(model)
+    return JuMP.value.(α)
+end
+
+function logsymcover_ref_reset!(ps, logA)
     n = size(logA, 1)
     for i in 1:n
         for j in 1:n
@@ -28,14 +47,40 @@ function logcoversym_ref_reset!(ps, logA)
     return ps
 end
 
-function logcoversym_ref(logA)
-    model, α, ps = logcoversym_ref_setup(logA)
+function logsymcover_ref(logA)
+    model, α, ps = logsymcover_ref_setup(logA)
     JuMP.optimize!(model)
     return JuMP.value.(α)
 end
 
-function coversym_ref(A)
+function symcover_ref(A)
     issymmetric(A) || error("Matrix A must be symmetric")
-    α = logcoversym_ref(log.(abs.(A)))
+    α = logsymcover_ref(log.(abs.(A)), A)
     return exp.(α)
+end
+
+function logcover_ref(logA, A)
+    m, n = size(logA, 1), size(logA, 2)
+    model = JuMP.Model(HiGHS.Optimizer)
+    JuMP.set_silent(model)
+    nz1, nz2 = vec(sum(!iszero, A; dims=2)), vec(sum(!iszero, A; dims=1))
+    @variable(model, α[1:m])
+    @variable(model, β[1:n])
+    @objective(model, Min, sum(abs2, α[i] + β[j] - logA[i, j] for i in 1:m, j in 1:n if !iszero(A[i, j])))
+    for i in 1:m
+        for j in 1:n
+            if iszero(A[i, j])
+                continue
+            end
+            @constraint(model, α[i] + β[j] - logA[i, j] >= 0)
+        end
+    end
+    @constraint(model, sum(nz1[i] * α[i] for i in 1:m) == sum(nz2[j] * β[j] for j in 1:n))
+    JuMP.optimize!(model)
+    return JuMP.value.(α), JuMP.value.(β)
+end
+
+function cover_ref(A)
+    α, β = logcover_ref(log.(abs.(A)), A)
+    return exp.(α), exp.(β)
 end

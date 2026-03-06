@@ -2,13 +2,13 @@ using LinearAlgebra
 using Graphs: Graphs, connected_components
 using NautyGraphs: NautyGraph, canonize!
 
-if !isdefined(Main, :logcoversym_ref)
+if !isdefined(Main, :logsymcover_ref)
     include("testutils.jl")
 end
 
 function accumulate_examples_symmetric!(comps, A, model, αvariable, ps)
     logA = log.(abs.(A))
-    logcoversym_ref_reset!(ps, logA)
+    logsymcover_ref_reset!(ps, logA)
     α = try
             JuMP.optimize!(model)
             JuMP.value.(αvariable)
@@ -32,7 +32,7 @@ end
 valrange = 1:20
 comps = Dict{Vector{Tuple{Int,Int}}, Matrix{Int}}()
 Adummy = Symmetric([rand(valrange) for _ in 1:5, _ in 1:5])
-model, αvariable, ps = logcoversym_ref_setup(log.(abs.(Adummy)))
+model, αvariable, ps = logsymcover_ref_setup(log.(abs.(Adummy)))
 for i = 1:10^5
     A = Symmetric([rand(valrange) for _ in 1:5, _ in 1:5])
     accumulate_examples_symmetric!(comps, A, model, αvariable, ps)
