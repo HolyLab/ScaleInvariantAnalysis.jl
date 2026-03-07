@@ -2,42 +2,6 @@ using ScaleInvariantAnalysis
 using LinearAlgebra
 using Test
 
-function test_scaleinv(f, A::AbstractMatrix, p::Int; iter=10, rtol=sqrt(eps(float(eltype(A)))))
-    npass = 0
-    n = size(A, 1)
-    @assert size(A, 2) == n "Matrix A must be square"
-    a = f(A)
-    for _ in 1:iter
-        d = -log.(rand(n))
-        ad = f(A .* d .* d')
-        npass += a .* d .^ p ≈ ad ? npass + 1 : npass
-    end
-    @test npass ≥ iter - 1
-end
-
-function test_sumlog(A, a, b; rtol=1e-6)
-    α, β = log.(a), log.(b)
-    Aref = sum(abs(log(abs(A[i, j]))) for i in axes(A, 1), j in axes(A, 2) if A[i, j] != 0)
-    for j in axes(A, 2)
-        s = 0.0
-        for i in axes(A, 1)
-            if A[i, j] != 0
-                s += log(abs(A[i, j])) - α[i] - β[j]
-            end
-        end
-        @test abs(s) ≤ rtol * Aref
-    end
-    for i in axes(A, 1)
-        s = 0.0
-        for j in axes(A, 2)
-            if A[i, j] != 0
-                s += log(abs(A[i, j])) - α[i] - β[j]
-            end
-        end
-        @test abs(s) ≤ rtol * Aref
-    end
-end
-
 @testset "ScaleInvariantAnalysis.jl" begin
     @test symscale([2.0 1.0; 1.0 3.0]) ≈ symscale([2.0 1.0; 1.0 3.0]; exact=true) ≈ exp.([3 1; 1 3] \ [log(2.0); log(3.0)])
     @test symscale([1.0 -0.2; -0.2 0]; exact=true) ≈ [1, 0.2]
@@ -63,19 +27,19 @@ end
     @test a ≈ [1, 0]
     @test b ≈ [1, 0]
 
-    # cover_tight: a[i]*b[j] >= abs(A[i,j]) for all i, j
+    # cover_lmin: a[i]*b[j] >= abs(A[i,j]) for all i, j
     for A in ([2.0 1.0; 1.0 3.0], [0.0 1.0; -2.0 0.0], [1.0 0; 0 0])
-        a, b = cover_tight(A)
+        a, b = cover_lmin(A)
         @test all(a[i] * b[j] >= abs(A[i, j]) - 1e-12 for i in axes(A,1), j in axes(A,2))
     end
     # zero-row / zero-column entries should give zero scale
-    a, b = cover_tight([1.0 0; 0 0])
+    a, b = cover_lmin([1.0 0; 0 0])
     @test b[2] == 0
     # cover is tighter than naive row/column maxima on an asymmetric matrix
     A = [100.0 1.0; 1.0 0.01]
     a_naive = vec(sqrt.(maximum(abs, A; dims=2)))
     b_naive = vec(sqrt.(maximum(abs, A; dims=1)))
-    a, b = cover_tight(A)
+    a, b = cover_lmin(A)
     @test maximum(a[i]*b[j]/abs(A[i,j]) for i in 1:2, j in 1:2) <
           maximum(a_naive[i]*b_naive[j]/abs(A[i,j]) for i in 1:2, j in 1:2)
 
