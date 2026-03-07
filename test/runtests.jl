@@ -99,6 +99,29 @@ using Test
         @test abs(dotabs(A_ill \ b, a_ill2) - dotabs(big.(A_ill) \ big.(b), a_ill2)) <= 10^3 * eps(mag_ill2)
     end
 
+    @testset "symcover_qmin and cover_qmin" begin
+        for A in ([2.0 1.0; 1.0 3.0], [100.0 1.0; 1.0 0.01], [4.0 2.0 1.0; 2.0 3.0 2.0; 1.0 2.0 5.0])
+            a_fast = symcover(A)
+            a_lmin = symcover_lmin(A)
+            a_qmin = symcover_qmin(A)
+            # qmin is a valid cover
+            @test all(a_qmin[i] * a_qmin[j] >= abs(A[i, j]) - 1e-10 for i in axes(A, 1), j in axes(A, 2))
+            # qmin achieves lower or equal qobjective than both symcover and symcover_lmin
+            @test qobjective(a_qmin, A) <= qobjective(a_fast, A) + 1e-8
+            @test qobjective(a_qmin, A) <= qobjective(a_lmin, A) + 1e-8
+        end
+        for A in ([2.0 1.0; 1.0 3.0], [100.0 1.0; 0.5 0.01], [1.0 2.0 3.0; 4.0 5.0 6.0])
+            a_fast, b_fast = cover(A)
+            a_lmin, b_lmin = cover_lmin(A)
+            a_qmin, b_qmin = cover_qmin(A)
+            # qmin is a valid cover
+            @test all(a_qmin[i] * b_qmin[j] >= abs(A[i, j]) - 1e-10 for i in axes(A, 1), j in axes(A, 2))
+            # qmin achieves lower or equal qobjective than both cover and cover_lmin
+            @test qobjective(a_qmin, b_qmin, A) <= qobjective(a_fast, b_fast, A) + 1e-8
+            @test qobjective(a_qmin, b_qmin, A) <= qobjective(a_lmin, b_lmin, A) + 1e-8
+        end
+    end
+
     @testset "quality vs optimal (testmatrices)" begin
         if !isdefined(@__MODULE__, :symmetric_matrices) || !isdefined(@__MODULE__, :general_matrices)
             include("testmatrices.jl")   # defines symmetric_matrices and general_matrices
