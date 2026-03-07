@@ -4,7 +4,7 @@ using LinearAlgebra
 using SparseArrays
 using LoopVectorization
 
-export lobjective, qobjective, symcover, cover, symcover_lmin, cover_lmin, symcover_qmin, cover_qmin
+export cover_lobjective, cover_qobjective, symcover, cover, symcover_lmin, cover_lmin, symcover_qmin, cover_qmin
 export dotabs
 
 include("covers.jl")
