@@ -82,18 +82,34 @@ See also: [`cover_lmin`](@ref), [`cover_qmin`](@ref), [`symcover`](@ref).
 """
 function cover(A::AbstractMatrix; kwargs...)
     T = float(eltype(A))
-    a, b = zeros(T, axes(A, 1)), zeros(T, axes(A, 2))
-    @turbo for j in axes(A, 2)
-        bj = zero(T)
+    a = zeros(T, axes(A, 1))
+    b = zeros(T, axes(A, 2))
+    loga = fill(zero(T), axes(A, 1))
+    logb = fill(zero(T), axes(A, 2))
+    nza  = fill(0, axes(A, 1))
+    nzb  = fill(0, axes(A, 2))
+    logmu = zero(T)
+    nztotal = 0
+    for j in axes(A, 2)
         for i in axes(A, 1)
             Aij = abs(A[i, j])
-            a[i] = max(a[i], Aij)
-            bj = max(bj, Aij)
+            iszero(Aij) && continue
+            lAij = log(Aij)
+            loga[i] += lAij
+            logb[j] += lAij
+            nza[i] += 1
+            nzb[j] += 1
+            logmu += lAij
+            nztotal += 1
         end
-        b[j] = bj
     end
-    map!(sqrt, a, a)
-    map!(sqrt, b, b)
+    halfmu = iszero(nztotal) ? zero(T) : T(logmu / (2 * nztotal))
+    for i in axes(A, 1)
+        a[i] = iszero(nza[i]) ? zero(T) : exp(loga[i] / nza[i] - halfmu)
+    end
+    for j in axes(A, 2)
+        b[j] = iszero(nzb[j]) ? zero(T) : exp(logb[j] / nzb[j] - halfmu)
+    end
     return tighten_cover!(a, b, A; kwargs...)
 end
 
@@ -108,7 +124,7 @@ function tighten_cover!(a::AbstractVector{T}, A::AbstractMatrix; iter::Int=3) wh
             aratioj, aj = aratio[j], a[j]
             for i in eachindex(a)
                 Aij = T(abs(A[i, j]))
-                r = a[i] * aj / Aij
+                r = ifelse(iszero(Aij), typemax(T), a[i] * aj / Aij)
                 aratio[i] = min(aratio[i], r)
                 aratioj = min(aratioj, r)
             end
@@ -131,7 +147,7 @@ function tighten_cover!(a::AbstractVector{T}, b::AbstractVector{T}, A::AbstractM
             bratioj, bj = bratio[j], b[j]
             for i in eachindex(a)
                 Aij = T(abs(A[i, j]))
-                r = a[i] * bj / Aij
+                r = ifelse(iszero(Aij), typemax(T), a[i] * bj / Aij)
                 aratio[i] = min(aratio[i], r)
                 bratioj = min(bratioj, r)
             end
