@@ -27,7 +27,7 @@ A concrete example: a 3×3 matrix whose rows and columns correspond to physical
 variables at very different scales (position in metres, velocity in m/s, force
 in N):
 
-```jldoctest coverones; filter = r"\d+\.\d+" => "≈"
+```jldoctest coverones
 julia> using ScaleInvariantAnalysis
 
 julia> A = [1e6 1e3 1.0; 1e3 1.0 1e-3; 1.0 1e-3 1e-6];
@@ -54,7 +54,7 @@ exactly tight.  Two summary statistics aggregate these excesses:
 
 Both equal zero if and only if every constraint is tight.
 
-```jldoctest quality; filter = r"\d+\.\d+" => "≈"
+```jldoctest quality; filter = r"(\d+\.\d{6})\d+" => s"\1"
 julia> using ScaleInvariantAnalysis
 
 julia> A = [4.0 2.0; 2.0 9.0];
