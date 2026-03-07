@@ -26,14 +26,14 @@ function dotabs(x::AbstractVector{<:Real}, y::AbstractVector{<:Real})
 end
 
 """
-    a, mag = divmag(A, b; cond::Bool=false, kwargs...)
+    a, mag = divmag(A, b; cond::Bool=false)
 
 Given a symmetric matrix `A` and vector `b`, for `x = A \\ b` return a pair
 where `mag` is a naive estimate of the magnitude of `sum(abs.(x .* a))`. `a` and
 `mag` are scale-covariant in circumstances where `A \\ b` is contravariant. With
 `cond=false`, the estimate is based only on the magnitudes of the numbers in `A`
 and `b`, and does not account for the conditioning of `A` or cancellation in the
-solution process. Any `kwargs` are passed to [`symscale`](@ref).
+solution process.
 
 This can be used to form scale-invariant estimates of roundoff errors in
 computations involving `A`, `b`, and `x`.

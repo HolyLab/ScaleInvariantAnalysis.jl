@@ -5,19 +5,16 @@
 [![Build Status](https://github.com/HolyLab/ScaleInvariantAnalysis.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/HolyLab/ScaleInvariantAnalysis.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/HolyLab/ScaleInvariantAnalysis.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/HolyLab/ScaleInvariantAnalysis.jl)
 
-This package provides tools for numerical analysis under conditions where the
-underlying mathematics is scale-invariant. We work on computers with finite
-precision, so operations like matrix-multiplication and matrix-division are
-expected to have some error. However, naive estimates of the error, based on
-quantities like `norm(x)`, may not be scale-invariant.
+This package computes **covers** of matrices: non-negative vectors `a` (and `b`)
+such that `a[i] * b[j] >= abs(A[i, j])` for all `i`, `j`.  Covers are the
+natural scale-covariant representation of a matrix — under row/column diagonal
+scaling they transform exactly as the matrix entries do — making them a useful
+building block for scale-invariant numerical analysis.
 
-For example, if `H` is a diagonal nonnegative (Hessian) matrix (i.e., a rank-2
-covariant tensor), with a change-of-scale in the variables all such `H` are
-equivalent to the identity matrix. Therefore we might think that its [condition
-number](https://en.wikipedia.org/wiki/Condition_number) should in fact be 1.
-This package provides tool to calculate condition number, as well as several
-other quantities, under conditions of scale-invariance.
+Fast O(n²) heuristics (`symcover`, `cover`) are provided for everyday use.
+Globally optimal covers minimizing a log-domain linear or quadratic objective
+(`symcover_lmin`, `cover_lmin`, `symcover_qmin`, `cover_qmin`) are available
+as an extension when JuMP and HiGHS are loaded.
 
-See the
-[documentation](https://HolyLab.github.io/ScaleInvariantAnalysis.jl/dev/) for
-more information.
+See the [documentation](https://HolyLab.github.io/ScaleInvariantAnalysis.jl/dev/)
+for motivation, examples, and a full API reference.
