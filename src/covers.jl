@@ -73,6 +73,8 @@ function symcover(A::AbstractMatrix; kwargs...)
             if iszero(aj)
                 if !iszero(ai)
                     a[j] = Aij / ai
+                else
+                    a[i] = a[j] = sqrt(Aij)
                 end
             elseif iszero(ai)
                 a[i] = Aij / aj

@@ -16,12 +16,15 @@ using Test
         # Zero diagonal gives zero scale
         a = symcover([1.0 0; 0 0])
         @test a[2] == 0
+        a = symcover([0 0; 0 1.0])
+        @test a[1] == 0
         # Diagonal scaling covariance: symcover(D*A*D') ≈ d .* symcover(A)
         A = [2.0 1.0; 1.0 3.0]
         d = [2.0, 0.5]
         @test symcover(A .* d .* d') ≈ d .* symcover(A)
         # Non-square input is rejected
         @test_throws ArgumentError symcover([1.0 2.0; 3.0 4.0; 5.0 6.0])
+        @test symcover([0 1; 1 0]) == [1, 1]
     end
 
     @testset "cover" begin
