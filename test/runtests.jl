@@ -16,12 +16,15 @@ using Test
         # Zero diagonal gives zero scale
         a = symcover([1.0 0; 0 0])
         @test a[2] == 0
+        a = symcover([0 0; 0 1.0])
+        @test a[1] == 0
         # Diagonal scaling covariance: symcover(D*A*D') ≈ d .* symcover(A)
         A = [2.0 1.0; 1.0 3.0]
         d = [2.0, 0.5]
         @test symcover(A .* d .* d') ≈ d .* symcover(A)
         # Non-square input is rejected
         @test_throws ArgumentError symcover([1.0 2.0; 3.0 4.0; 5.0 6.0])
+        @test symcover([0 1; 1 0]) == [1, 1]
     end
 
     @testset "cover" begin
@@ -48,23 +51,23 @@ using Test
         @test b / c ≈ dc .* b0
     end
 
-    @testset "lobjective and qobjective" begin
+    @testset "cover_lobjective and cover_qobjective" begin
         A = [4.0 2.0; 2.0 1.0]
         a = symcover(A)
         # Non-negative (since a[i]*a[j] >= |A[i,j]|)
-        @test lobjective(a, A) >= 0
-        @test qobjective(a, A) >= 0
+        @test cover_lobjective(a, A) >= 0
+        @test cover_qobjective(a, A) >= 0
         # Two-argument form equals one-argument form
-        @test lobjective(a, a, A) == lobjective(a, A)
-        @test qobjective(a, a, A) == qobjective(a, A)
+        @test cover_lobjective(a, a, A) == cover_lobjective(a, A)
+        @test cover_qobjective(a, a, A) == cover_qobjective(a, A)
         # Explicit formula check
         a2, b2 = cover(A)
-        @test lobjective(a2, b2, A) ≈ sum(log(a2[i] * b2[j] / abs(A[i, j])) for i in 1:2, j in 1:2 if A[i, j] != 0)
-        @test qobjective(a2, b2, A) ≈ sum(log(a2[i] * b2[j] / abs(A[i, j]))^2 for i in 1:2, j in 1:2 if A[i, j] != 0)
-        # Zeros in A are skipped; tight diagonal cover gives zero lobjective
+        @test cover_lobjective(a2, b2, A) ≈ sum(log(a2[i] * b2[j] / abs(A[i, j])) for i in 1:2, j in 1:2 if A[i, j] != 0)
+        @test cover_qobjective(a2, b2, A) ≈ sum(log(a2[i] * b2[j] / abs(A[i, j]))^2 for i in 1:2, j in 1:2 if A[i, j] != 0)
+        # Zeros in A are skipped; tight diagonal cover gives zero cover_lobjective
         A0 = [1.0 0.0; 0.0 4.0]
         a0 = symcover(A0)
-        @test lobjective(a0, A0) == 0.0
+        @test cover_lobjective(a0, A0) == 0.0
     end
 
     @testset "dotabs" begin
@@ -106,9 +109,9 @@ using Test
             a_qmin = symcover_qmin(A)
             # qmin is a valid cover
             @test all(a_qmin[i] * a_qmin[j] >= abs(A[i, j]) - 1e-10 for i in axes(A, 1), j in axes(A, 2))
-            # qmin achieves lower or equal qobjective than both symcover and symcover_lmin
-            @test qobjective(a_qmin, A) <= qobjective(a_fast, A) + 1e-8
-            @test qobjective(a_qmin, A) <= qobjective(a_lmin, A) + 1e-8
+            # qmin achieves lower or equal cover_qobjective than both symcover and symcover_lmin
+            @test cover_qobjective(a_qmin, A) <= cover_qobjective(a_fast, A) + 1e-8
+            @test cover_qobjective(a_qmin, A) <= cover_qobjective(a_lmin, A) + 1e-8
         end
         for A in ([2.0 1.0; 1.0 3.0], [100.0 1.0; 0.5 0.01], [1.0 2.0 3.0; 4.0 5.0 6.0])
             a_fast, b_fast = cover(A)
@@ -116,9 +119,9 @@ using Test
             a_qmin, b_qmin = cover_qmin(A)
             # qmin is a valid cover
             @test all(a_qmin[i] * b_qmin[j] >= abs(A[i, j]) - 1e-10 for i in axes(A, 1), j in axes(A, 2))
-            # qmin achieves lower or equal qobjective than both cover and cover_lmin
-            @test qobjective(a_qmin, b_qmin, A) <= qobjective(a_fast, b_fast, A) + 1e-8
-            @test qobjective(a_qmin, b_qmin, A) <= qobjective(a_lmin, b_lmin, A) + 1e-8
+            # qmin achieves lower or equal cover_qobjective than both cover and cover_lmin
+            @test cover_qobjective(a_qmin, b_qmin, A) <= cover_qobjective(a_fast, b_fast, A) + 1e-8
+            @test cover_qobjective(a_qmin, b_qmin, A) <= cover_qobjective(a_lmin, b_lmin, A) + 1e-8
         end
     end
 
@@ -127,24 +130,24 @@ using Test
             include("testmatrices.jl")   # defines symmetric_matrices and general_matrices
         end
 
-        # symcover lobjective should be close to optimal (symcover_lmin)
+        # symcover cover_lobjective should be close to optimal (symcover_lmin)
         sym_ratios = Float64[]
         for (_, A) in symmetric_matrices
             Af = Float64.(A)
-            lopt  = lobjective(symcover_lmin(Af), Af)
-            lfast = lobjective(symcover(Af; iter=10), Af)
+            lopt  = cover_lobjective(symcover_lmin(Af), Af)
+            lfast = cover_lobjective(symcover(Af; iter=10), Af)
             iszero(lopt) || push!(sym_ratios, lfast / lopt)
         end
         @test median(sym_ratios) < 1.01
 
-        # cover lobjective should be close to optimal (cover_lmin)
+        # cover cover_lobjective should be close to optimal (cover_lmin)
         gen_ratios = Float64[]
         for (_, A) in general_matrices
             Af = Float64.(A)
             al, bl = cover_lmin(Af)
             a,  b  = cover(Af; iter=10)
-            lopt  = lobjective(al, bl, Af)
-            lfast = lobjective(a,  b,  Af)
+            lopt  = cover_lobjective(al, bl, Af)
+            lfast = cover_lobjective(a,  b,  Af)
             iszero(lopt) || push!(gen_ratios, lfast / lopt)
         end
         @test median(gen_ratios) < 1.1

@@ -1,5 +1,6 @@
 using ScaleInvariantAnalysis
 using Documenter
+using JuMP, HiGHS
 
 DocMeta.setdocmeta!(ScaleInvariantAnalysis, :DocTestSetup, :(using ScaleInvariantAnalysis); recursive=true)
 
@@ -12,6 +13,7 @@ makedocs(;
         edit_link="main",
         assets=String[],
     ),
+    checkdocs=:exports,
     pages=[
         "Home" => "index.md",
     ],

@@ -1,30 +1,32 @@
 """
-    lobjective(a, b, A)
-    lobjective(a, A)
+    cover_lobjective(a, b, A)
+    cover_lobjective(a, A)
 
 Compute the sum of log-domain excesses over nonzero entries of `A`:
+
     ∑_{i,j : A[i,j] ≠ 0} log(a[i] * b[j] / |A[i,j]|)
 
-The two-argument form is for symmetric matrices where the cover is `a*a'`.`
+The two-argument form is for symmetric matrices where the cover is `a*a'`.
 
-See also: [`qobjective`](@ref) for the sum of squared log-domain excesses.
+See also: [`cover_qobjective`](@ref) for the sum of squared log-domain excesses.
 """
-lobjective(a, b, A) = sum(log(a[i] * b[j] / abs(A[i, j])) for i in axes(a, 1), j in axes(b, 1) if A[i, j] != 0)
-lobjective(a, A) = lobjective(a, a, A)
+cover_lobjective(a, b, A) = sum(log(a[i] * b[j] / abs(A[i, j])) for i in axes(a, 1), j in axes(b, 1) if A[i, j] != 0)
+cover_lobjective(a, A) = cover_lobjective(a, a, A)
 
 """
-    qobjective(a, b, A)
-    qobjective(a, A)
+    cover_qobjective(a, b, A)
+    cover_qobjective(a, A)
 
 Compute the sum of squared log-domain excesses over nonzero entries of `A`:
+
     ∑_{i,j : A[i,j] ≠ 0} log(a[i] * b[j] / |A[i,j]|)²
 
 The two-argument form is for symmetric matrices where the cover is `a*a'`.`
 
-See also: [`lobjective`](@ref) for the sum of log-domain excesses.
+See also: [`cover_lobjective`](@ref) for the sum of log-domain excesses.
 """
-qobjective(a, b, A) = sum(log(a[i] * b[j] / abs(A[i, j]))^2 for i in axes(a, 1), j in axes(b, 1) if A[i, j] != 0)
-qobjective(a, A) = qobjective(a, a, A)
+cover_qobjective(a, b, A) = sum(log(a[i] * b[j] / abs(A[i, j]))^2 for i in axes(a, 1), j in axes(b, 1) if A[i, j] != 0)
+cover_qobjective(a, A) = cover_qobjective(a, a, A)
 
 """
     a = symcover(A; iter=3)
@@ -33,10 +35,27 @@ Given a square matrix `A` assumed to be symmetric, return a vector `a`
 representing the symmetric cover of `A`, so that `a[i] * a[j] >= abs(A[i, j])`
 for all `i`, `j`.
 
-`a` is not minimal, but with increasing `iter` it is increasingly tight.
+`a` may not be minimal, but it is tightened iteratively, with `iter` specifying
+the number of iterations (more iterations make tighter covers).
 `symcover` is fast and generally recommended for production use.
 
 See also: [`symcover_lmin`](@ref), [`symcover_qmin`](@ref), [`cover`](@ref).
+
+# Examples
+
+```jldoctest
+julia> A = [4 -1; -1 0];
+
+julia> a = symcover(A)
+2-element Vector{Float64}:
+ 2.0
+ 0.5
+
+julia> a * a'
+2×2 Matrix{Float64}:
+ 4.0  1.0
+ 1.0  0.25
+```
 """
 function symcover(A::AbstractMatrix; kwargs...)
     ax = axes(A, 1)
@@ -54,6 +73,8 @@ function symcover(A::AbstractMatrix; kwargs...)
             if iszero(aj)
                 if !iszero(ai)
                     a[j] = Aij / ai
+                else
+                    a[i] = a[j] = sqrt(Aij)
                 end
             elseif iszero(ai)
                 a[i] = Aij / aj
@@ -75,10 +96,25 @@ end
 Given a matrix `A`, return vectors `a` and `b` such that `a[i] * b[j] >= abs(A[i, j])`
 for all `i`, `j`.
 
-`a .* b'` is not minimal, but with increasing `iter` it is increasingly tight.
+`a .* b'` may not be minimal, but it is tightened iteratively, with `iter` specifying
+the number of iterations (more iterations make tighter covers).
 `cover` is fast and generally recommended for production use.
 
 See also: [`cover_lmin`](@ref), [`cover_qmin`](@ref), [`symcover`](@ref).
+
+# Examples
+
+```jldoctest; filter = r"(\\d+\\.\\d{6})\\d+" => s"\\1"
+julia> A = [1 2 3; 6 5 4];
+
+julia> a, b = cover(A)
+([1.2544610775677627, 3.4759059767492304], [1.7261686708831454, 1.6581941714076147, 2.391465190627206])
+
+julia> a * b'
+2×3 Matrix{Float64}:
+ 2.16541  2.08014  3.0
+ 6.0      5.76373  8.31251
+```
 """
 function cover(A::AbstractMatrix; kwargs...)
     T = float(eltype(A))
@@ -167,14 +203,15 @@ end
     a = symcover_qmin(A)
 
 Given a square matrix `A` assumed to be symmetric, return a vector `a` representing the
-symmetric q-minimal (quadratic-minimal) cover of `A`. This solves the optimization problem
+symmetric quadratic-minimal cover of `A`. This solves the optimization problem
 
     min ∑_{i,j : A[i,j] ≠ 0} log(a[i] * a[j] / |A[i,j]|)²
     s.t.                     a[i] * a[j] ≥ |A[i, j]| for all i, j
 
 This implementation is *slow*. See also:
-- [`symcover_lmin`](@ref) for a much more efficient option that is not quadratically-optimal
-- [`cover_qmin`](@ref) for a generalization to non-symmetric matrices.
+- [`cover_qobjective`](@ref) for the objective minimized by this function
+- [`symcover`](@ref) for a much more efficient option that is not quadratically-optimal
+- [`cover_qmin`](@ref) for a generalization to non-symmetric matrices
 
 !!! note
     This function requires loading the JuMP and HiGHS packages, which are not dependencies of this package.
@@ -184,26 +221,32 @@ function symcover_qmin end
 """
     a = symcover_lmin(A)
 
-Similar to [`symcover_qmin`](@ref), but returns a symmetric l-minimal (linear-minimal) cover of `A`.
+Similar to [`symcover_qmin`](@ref), but returns a symmetric linear-minimal cover of `A`.
 """
 function symcover_lmin end
 
 """
     a, b = cover_qmin(A)
 
-Given a matrix `A`, return vectors `a` and `b` representing the q-minimal (quadratic-minimal) cover of `A`. This solves the optimization problem
+Given a matrix `A`, return vectors `a` and `b` representing the quadratic-minimal cover of `A`.
+This solves the optimization problem
+
     min ∑_{i,j : A[i,j] ≠ 0} log(a[i] * b[j] / |A[i,j]|)²
     s.t.                     a[i] * b[j] ≥ |A[i, j]| for all i, j
 
 This implementation is *slow*. See also:
-- [`cover_lmin`](@ref) for a much more efficient option that is not quadratically-optimal
+- [`cover_qobjective`](@ref) for the objective minimized by this function
+- [`cover`](@ref) for a much more efficient option that is not quadratically-optimal
 - [`symcover_qmin`](@ref) for a specialization to symmetric matrices
+
+!!! note
+    This function requires loading the JuMP and HiGHS packages, which are not dependencies of this package.
 """
 function cover_qmin end
 
 """
     a, b = cover_lmin(A)
 
-Similar to [`cover_qmin`](@ref), but returns an l-minimal (linear-minimal) cover of `A`.
+Similar to [`cover_qmin`](@ref), but returns a linear-minimal cover of `A`.
 """
 function cover_lmin end

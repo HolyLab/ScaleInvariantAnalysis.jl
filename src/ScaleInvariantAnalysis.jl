@@ -3,8 +3,9 @@ module ScaleInvariantAnalysis
 using LinearAlgebra
 using SparseArrays
 using LoopVectorization
+using PrecompileTools
 
-export lobjective, qobjective, symcover, cover, symcover_lmin, cover_lmin, symcover_qmin, cover_qmin
+export cover_lobjective, cover_qobjective, symcover, cover, symcover_lmin, cover_lmin, symcover_qmin, cover_qmin
 export dotabs
 
 include("covers.jl")
@@ -54,6 +55,11 @@ function __init__()
             return true
         end
     end
+end
+
+@compile_workload begin
+    symcover([1.0 0.1; 0.1 4.0])
+    cover([1.0 0.5; 0.1 4.0])
 end
 
 end # module

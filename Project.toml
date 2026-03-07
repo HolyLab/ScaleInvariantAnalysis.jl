@@ -1,11 +1,12 @@
 name = "ScaleInvariantAnalysis"
 uuid = "727e6139-ff52-4636-a344-ed1d23e73ffc"
-version = "1.0.0-DEV"
 authors = ["Tim Holy <tim.holy@gmail.com> and contributors"]
+version = "1.0.0-DEV"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [weakdeps]
@@ -22,6 +23,8 @@ JuMP = "1"
 LinearAlgebra = "1.10.0"
 NautyGraphs = "0.7"
 ParametricOptInterface = "0.15"
+PrecompileTools = "1"
+Random = "1"
 SparseArrays = "1.10.0"
 julia = "1.10.10"
 
@@ -31,8 +34,9 @@ HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
 JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
 NautyGraphs = "7509a0a4-015a-4167-b44b-0799a1a2605e"
 ParametricOptInterface = "0ce4ce61-57bf-432b-a095-efac525d185e"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Graphs", "HiGHS", "JuMP", "NautyGraphs", "ParametricOptInterface", "Statistics", "Test"]
+test = ["Graphs", "HiGHS", "JuMP", "NautyGraphs", "ParametricOptInterface", "Random", "Statistics", "Test"]
