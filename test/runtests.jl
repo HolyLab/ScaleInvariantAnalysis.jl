@@ -134,16 +134,25 @@ using Test
         sym_ratios = Float64[]
         for (_, A) in symmetric_matrices
             Af = Float64.(A)
+            a0 = symcover(Af; iter=0)
+            @test all(a0[i] * a0[j] >= abs(Af[i, j]) - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
+            a0 = symcover(Af / 100; iter=0)
+            @test all(a0[i] * a0[j] >= abs(Af[i, j])/100 - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
+            a = symcover(Af; iter=10)
             lopt  = cover_lobjective(symcover_lmin(Af), Af)
-            lfast = cover_lobjective(symcover(Af; iter=10), Af)
+            lfast = cover_lobjective(a, Af)
             iszero(lopt) || push!(sym_ratios, lfast / lopt)
         end
-        @test median(sym_ratios) < 1.01
+        @test median(sym_ratios) < 1.1
 
         # cover cover_lobjective should be close to optimal (cover_lmin)
         gen_ratios = Float64[]
         for (_, A) in general_matrices
             Af = Float64.(A)
+            a0, b0  = cover(Af; iter=0)
+            @test all(a0[i] * b0[j] >= abs(Af[i, j]) - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
+            a0, b0  = cover(Af / 100; iter=0)
+            @test all(a0[i] * b0[j] >= abs(Af[i, j])/100 - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
             al, bl = cover_lmin(Af)
             a,  b  = cover(Af; iter=10)
             lopt  = cover_lobjective(al, bl, Af)

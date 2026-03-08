@@ -81,7 +81,7 @@ function symcover(A::AbstractMatrix; kwargs...)
             else
                 aprod = ai * aj
                 aprod >= Aij && continue
-                s = sqrt(Aij / sqrt(aprod))
+                s = sqrt(Aij / aprod)
                 a[i] = s * ai
                 a[j] = s * aj
             end
@@ -108,12 +108,12 @@ See also: [`cover_lmin`](@ref), [`cover_qmin`](@ref), [`symcover`](@ref).
 julia> A = [1 2 3; 6 5 4];
 
 julia> a, b = cover(A)
-([1.2544610775677627, 3.4759059767492304], [1.7261686708831454, 1.6581941714076147, 2.391465190627206])
+([1.2674308473260654, 3.4759059767492304], [1.7261686708831454, 1.61137045961268, 2.366993044495631])
 
 julia> a * b'
 2×3 Matrix{Float64}:
- 2.16541  2.08014  3.0
- 6.0      5.76373  8.31251
+ 2.1878  2.0423   3.0
+ 6.0     5.60097  8.22745
 ```
 """
 function cover(A::AbstractMatrix; kwargs...)
@@ -145,6 +145,28 @@ function cover(A::AbstractMatrix; kwargs...)
     end
     for j in axes(A, 2)
         b[j] = iszero(nzb[j]) ? zero(T) : exp(logb[j] / nzb[j] - halfmu)
+    end
+    # Now we have sums of (log(a[i]) + log(b[j]) - log(A[i, j])) to be zero across rows or columns.
+    # Now it needs to be boosted to cover A.
+    for j in axes(A, 2)
+        for i in axes(A, 1)
+            Aij, ai, bj = abs(A[i, j]), a[i], b[j]
+            if iszero(bj)
+                if !iszero(ai)
+                    b[j] = Aij / ai
+                else
+                    a[i] = b[j] = sqrt(Aij)
+                end
+            elseif iszero(ai)
+                a[i] = Aij / bj
+            else
+                aprod = ai * bj
+                aprod >= Aij && continue
+                s = sqrt(Aij / aprod)
+                a[i] = s * ai
+                b[j] = s * bj
+            end
+        end
     end
     return tighten_cover!(a, b, A; kwargs...)
 end
