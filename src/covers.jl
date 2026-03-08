@@ -151,21 +151,11 @@ function cover(A::AbstractMatrix; kwargs...)
     for j in axes(A, 2)
         for i in axes(A, 1)
             Aij, ai, bj = abs(A[i, j]), a[i], b[j]
-            if iszero(bj)
-                if !iszero(ai)
-                    b[j] = Aij / ai
-                else
-                    a[i] = b[j] = sqrt(Aij)
-                end
-            elseif iszero(ai)
-                a[i] = Aij / bj
-            else
-                aprod = ai * bj
-                aprod >= Aij && continue
-                s = sqrt(Aij / aprod)
-                a[i] = s * ai
-                b[j] = s * bj
-            end
+            aprod = ai * bj
+            aprod >= Aij && continue
+            s = sqrt(Aij / aprod)
+            a[i] = s * ai
+            b[j] = s * bj
         end
     end
     return tighten_cover!(a, b, A; kwargs...)
