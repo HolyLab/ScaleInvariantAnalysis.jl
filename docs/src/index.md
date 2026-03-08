@@ -27,7 +27,7 @@ A concrete example: a 3×3 matrix whose rows and columns correspond to physical
 variables with different units (position in meters, velocity in m/s, force
 in N):
 
-```jldoctest coverones
+```jldoctest coverones; filter = r"(\d+\.\d{6})\d+" => s"\1"
 julia> using ScaleInvariantAnalysis
 
 julia> A = [1e6 1e3 1.0; 1e3 1.0 1e-3; 1.0 1e-3 1e-6];
