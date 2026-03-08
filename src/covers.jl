@@ -81,7 +81,7 @@ function symcover(A::AbstractMatrix; kwargs...)
             else
                 aprod = ai * aj
                 aprod >= Aij && continue
-                s = sqrt(Aij / sqrt(aprod))
+                s = sqrt(Aij / aprod)
                 a[i] = s * ai
                 a[j] = s * aj
             end
@@ -145,6 +145,28 @@ function cover(A::AbstractMatrix; kwargs...)
     end
     for j in axes(A, 2)
         b[j] = iszero(nzb[j]) ? zero(T) : exp(logb[j] / nzb[j] - halfmu)
+    end
+    # Now we have sums of (log(a[i]) + log(b[j]) - log(A[i, j])) to be zero across rows or columns.
+    # Now it needs to be boosted to cover A.
+    for j in axes(A, 2)
+        for i in axes(A, 1)
+            Aij, ai, bj = abs(A[i, j]), a[i], b[j]
+            if iszero(bj)
+                if !iszero(ai)
+                    b[j] = Aij / ai
+                else
+                    a[i] = b[j] = sqrt(Aij)
+                end
+            elseif iszero(ai)
+                a[i] = Aij / bj
+            else
+                aprod = ai * bj
+                aprod >= Aij && continue
+                s = sqrt(Aij / aprod)
+                a[i] = s * ai
+                b[j] = s * bj
+            end
+        end
     end
     return tighten_cover!(a, b, A; kwargs...)
 end
