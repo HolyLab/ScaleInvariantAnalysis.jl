@@ -5,14 +5,19 @@ CurrentModule = ScaleInvariantAnalysis
 # ScaleInvariantAnalysis
 
 This package computes **covers** of matrices.  Given a matrix `A`, a cover is a
-pair of non-negative vectors `a`, `b` satisfying
+matrix `C` that can be defined as `C = a * b'`, where `a` and `b` are non-negative vectors.
+`C` must satisfy
 
 ```math
-a_i \cdot b_j \;\geq\; |A_{ij}| \quad \text{for all } i, j.
+C_{ij} \;\geq\; |A_{ij}| \quad \text{for all } i, j.
 ```
 
 For a symmetric matrix the cover is symmetric (`b = a`), so a single vector
 suffices: `a[i] * a[j] >= abs(A[i, j])`.
+
+For symmetric matrices, this package also supports **diagonalized covers**,
+where `C = Diagonal(d) + a * a'` is a cover for `A`. Here, both `a` and `d` are
+nonnegative vectors.
 
 ## Why covers?
 
@@ -101,14 +106,16 @@ julia> aq * bq'
 |---|---|---|---|
 | [`symcover`](@ref) | yes | (fast heuristic) | — |
 | [`cover`](@ref) | no | (fast heuristic) | — |
+| [`symdiagcover`](@ref) | yes | (fast heuristic) | — |
 | [`symcover_lmin`](@ref) | yes | `cover_lobjective` | JuMP + HiGHS |
 | [`cover_lmin`](@ref) | no | `cover_lobjective` | JuMP + HiGHS |
 | [`symcover_qmin`](@ref) | yes | `cover_qobjective` | JuMP + HiGHS |
 | [`cover_qmin`](@ref) | no | `cover_qobjective` | JuMP + HiGHS |
 
-**`symcover` and `cover` are recommended for production use.**  They run in
-O(n²) time and often land within a few percent of the `cover_lobjective`-optimal
-cover (see the quality tests involving `test/testmatrices.jl`).
+**`symcover`, `cover`, and `symdiagcover` are recommended for production use.**
+They run in O(mn) time for an ``m\times n`` matrix `A` and often land within a few
+percent of the `cover_lobjective`-optimal cover (see the quality tests involving
+`test/testmatrices.jl`).
 
 The `*_lmin` and `*_qmin` variants solve a convex program (via
 [JuMP](https://jump.dev/) and [HiGHS](https://highs.dev/)) and return a
@@ -127,7 +134,6 @@ a, b   = cover_qmin(A)        # globally quadratic-minimal general cover
 
 ```@index
 Modules = [ScaleInvariantAnalysis]
-Private = false
 ```
 
 ## Reference documentation

@@ -51,6 +51,37 @@ using Test
         @test b / c ≈ dc .* b0
     end
 
+    @testset "symdiagcover" begin
+        for A in ([2.0 1.0; 1.0 3.0], [1.0 -0.2; -0.2 0.0], [4.0 1e-8; 1e-8 1.0],
+                  [100.0 1.0; 1.0 0.01], [4.0 2.0 1.0; 2.0 3.0 2.0; 1.0 2.0 5.0])
+            d, a = symdiagcover(A)
+            # Off-diagonal cover property
+            @test all(a[i] * a[j] >= abs(A[i, j]) - 1e-12 for i in axes(A, 1), j in axes(A, 2) if i != j)
+            # Diagonal cover property
+            @test all(a[i]^2 + d[i] >= abs(A[i, i]) - 1e-12 for i in axes(A, 1))
+            # d is non-negative
+            @test all(d[i] >= 0 for i in axes(A, 1))
+            # d is as tight as possible: d[i] == max(0, |A[i,i]| - a[i]^2)
+            @test all(d[i] ≈ max(0.0, abs(A[i, i]) - a[i]^2) for i in axes(A, 1))
+        end
+        # Non-square input is rejected
+        @test_throws ArgumentError symdiagcover([1.0 2.0; 3.0 4.0; 5.0 6.0])
+        # For a diagonal matrix, a should be all zeros and d should cover the diagonal
+        A_diag = [4.0 0.0; 0.0 9.0]
+        d, a = symdiagcover(A_diag)
+        @test all(iszero, a)
+        @test d ≈ [4.0, 9.0]
+        # symdiagcover gives a tighter diagonal cover than symcover when off-diagonal entries are tiny
+        A_tiny = [4.0 1e-8; 1e-8 1.0]
+        d2, a2 = symdiagcover(A_tiny)
+        a_sym = symcover(A_tiny)
+        # The Diagonal(d)+a*a' cover is valid
+        cover_mat = Diagonal(d2) + a2 * a2'
+        @test all(cover_mat[i, j] >= abs(A_tiny[i, j]) - 1e-12 for i in axes(A_tiny, 1), j in axes(A_tiny, 2))
+        # symdiagcover uses a smaller a[i] than symcover (the diagonal slack goes to d instead)
+        @test any(a_sym[i] > a2[i] + 1e-12 for i in axes(A_tiny, 1))
+    end
+
     @testset "cover_lobjective and cover_qobjective" begin
         A = [4.0 2.0; 2.0 1.0]
         a = symcover(A)
