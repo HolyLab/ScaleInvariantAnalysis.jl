@@ -5,7 +5,7 @@ using SparseArrays
 using LoopVectorization
 using PrecompileTools
 
-export cover_lobjective, cover_qobjective, symcover, cover, symcover_lmin, cover_lmin, symcover_qmin, cover_qmin
+export cover_lobjective, cover_qobjective, cover, symcover, symdiagcover, cover_lmin, symcover_lmin, cover_qmin, symcover_qmin
 export dotabs
 
 include("covers.jl")

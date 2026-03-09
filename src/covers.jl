@@ -57,12 +57,16 @@ julia> a * a'
  1.0  0.25
 ```
 """
-function symcover(A::AbstractMatrix; kwargs...)
+function symcover(A::AbstractMatrix; exclude_diagonal::Bool=false, kwargs...)
     ax = axes(A, 1)
     axes(A, 2) == ax || throw(ArgumentError("symcover requires a square matrix"))
     a = similar(A, float(eltype(A)), ax)
-    for j in ax
-        a[j] = sqrt(abs(A[j, j]))
+    if exclude_diagonal
+        fill!(a, zero(eltype(a)))
+    else
+        for j in ax
+            a[j] = sqrt(abs(A[j, j]))
+        end
     end
     # Iterate over the diagonals of A, and update a[i] and a[j] to satisfy |A[i, j]| ≤ a[i] * a[j] whenever this constraint is violated
     # Iterating over the diagonals gives a more "balanced" result and typically results in lower loss than iterating in a triangular pattern.
@@ -87,7 +91,53 @@ function symcover(A::AbstractMatrix; kwargs...)
             end
         end
     end
-    return tighten_cover!(a, A; kwargs...)
+    return tighten_cover!(a, A; exclude_diagonal, kwargs...)
+end
+
+"""
+    d, a = symdiagcover(A; kwargs...)
+
+Given a square matrix `A` assumed to be symmetric, return vectors `d` and `a`
+representing a symmetric diagonalized cover `Diagonal(d) + a * a'` of `A` with
+the diagonal as tight as possible given `A` and `a`. In particular,
+
+    abs(A[i, j]) ≤ a[i] * a[j] for all i ≠ j, and
+    abs(A[i, i]) ≤ a[i]^2 + d[i] for all i.
+
+# Examples
+
+```jldoctest; setup=:(using LinearAlgebra), filter = r"(\\d+\\.\\d{6})\\d+" => s"\\1"
+julia> A = [4 1e-8; 1e-8 1];
+
+julia> a = symcover(A)
+2-element Vector{Float64}:
+ 2.0
+ 1.0
+
+julia> a * a'
+2×2 Matrix{Float64}:
+ 4.0  2.0
+ 2.0  1.0
+
+julia> d, a = symdiagcover(A)
+([3.99999999, 0.99999999], [0.0001, 0.0001])
+
+julia> Diagonal(d) + a * a'
+2×2 Matrix{Float64}:
+ 4.0     1.0e-8
+ 1.0e-8  1.0
+```
+For this case, one sees much tighter covering with `symdiagcover`.
+"""
+function symdiagcover(A::AbstractMatrix; kwargs...)
+    ax = axes(A, 1)
+    axes(A, 2) == ax || throw(ArgumentError("symcover requires a square matrix"))
+    a = symcover(A; exclude_diagonal=true, kwargs...)
+    d = map(ax) do i
+        Aii, ai = abs(A[i, i]), a[i]
+        max(zero(Aii), Aii - ai^2)
+    end
+    return d, a
 end
 
 """
@@ -161,22 +211,41 @@ function cover(A::AbstractMatrix; kwargs...)
     return tighten_cover!(a, b, A; kwargs...)
 end
 
-function tighten_cover!(a::AbstractVector{T}, A::AbstractMatrix; iter::Int=3) where T
+function tighten_cover!(a::AbstractVector{T}, A::AbstractMatrix; iter::Int=3, exclude_diagonal::Bool=false) where T
     ax = axes(A, 1)
     axes(A, 2) == ax || throw(ArgumentError("`tighten_cover!(a, A)` requires a square matrix `A`"))
     eachindex(a) == ax || throw(DimensionMismatch("indices of `a` must match the indexing of `A`"))
     aratio = similar(a)
     for _ in 1:iter
         fill!(aratio, typemax(T))
-        @turbo for j in eachindex(a)
-            aratioj, aj = aratio[j], a[j]
-            for i in eachindex(a)
-                Aij = T(abs(A[i, j]))
-                r = ifelse(iszero(Aij), typemax(T), a[i] * aj / Aij)
-                aratio[i] = min(aratio[i], r)
-                aratioj = min(aratioj, r)
+        if exclude_diagonal
+            for j in eachindex(a)
+                aratioj, aj = aratio[j], a[j]
+                for i in first(ax):j-1
+                    Aij = T(abs(A[i, j]))
+                    r = ifelse(iszero(Aij), typemax(T), a[i] * aj / Aij)
+                    aratio[i] = min(aratio[i], r)
+                    aratioj = min(aratioj, r)
+                end
+                for i in j+1:last(ax)
+                    Aij = T(abs(A[i, j]))
+                    r = ifelse(iszero(Aij), typemax(T), a[i] * aj / Aij)
+                    aratio[i] = min(aratio[i], r)
+                    aratioj = min(aratioj, r)
+                end
+                aratio[j] = aratioj
             end
-            aratio[j] = aratioj
+        else
+            @turbo for j in eachindex(a)
+                aratioj, aj = aratio[j], a[j]
+                for i in eachindex(a)
+                    Aij = T(abs(A[i, j]))
+                    r = ifelse(iszero(Aij), typemax(T), a[i] * aj / Aij)
+                    aratio[i] = min(aratio[i], r)
+                    aratioj = min(aratioj, r)
+                end
+                aratio[j] = aratioj
+            end
         end
         a ./= sqrt.(aratio)
     end
