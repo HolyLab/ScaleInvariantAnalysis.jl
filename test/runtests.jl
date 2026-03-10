@@ -10,8 +10,10 @@ using Test
         # Cover property: a[i]*a[j] >= abs(A[i,j]) for all i, j
         for A in ([2.0 1.0; 1.0 3.0], [1.0 -0.2; -0.2 0.0], [1.0 0.0; 0.0 0.0],
                   [100.0 1.0; 1.0 0.01])
-            a = symcover(A)
-            @test all(a[i] * a[j] >= abs(A[i, j]) - 1e-12 for i in axes(A, 1), j in axes(A, 2))
+            for prioritize in (:speed, :quality)
+                a = symcover(A; prioritize)
+                @test all(a[i] * a[j] >= abs(A[i, j]) - 1e-12 for i in axes(A, 1), j in axes(A, 2))
+            end
         end
         # Zero diagonal gives zero scale
         a = symcover([1.0 0; 0 0])
@@ -54,15 +56,17 @@ using Test
     @testset "symdiagcover" begin
         for A in ([2.0 1.0; 1.0 3.0], [1.0 -0.2; -0.2 0.0], [4.0 1e-8; 1e-8 1.0],
                   [100.0 1.0; 1.0 0.01], [4.0 2.0 1.0; 2.0 3.0 2.0; 1.0 2.0 5.0])
-            d, a = symdiagcover(A)
-            # Off-diagonal cover property
-            @test all(a[i] * a[j] >= abs(A[i, j]) - 1e-12 for i in axes(A, 1), j in axes(A, 2) if i != j)
-            # Diagonal cover property
-            @test all(a[i]^2 + d[i] >= abs(A[i, i]) - 1e-12 for i in axes(A, 1))
-            # d is non-negative
-            @test all(d[i] >= 0 for i in axes(A, 1))
-            # d is as tight as possible: d[i] == max(0, |A[i,i]| - a[i]^2)
-            @test all(d[i] ≈ max(0.0, abs(A[i, i]) - a[i]^2) for i in axes(A, 1))
+            for prioritize in (:speed, :quality)
+                d, a = symdiagcover(A; prioritize)
+                # Off-diagonal cover property
+                @test all(a[i] * a[j] >= abs(A[i, j]) - 1e-12 for i in axes(A, 1), j in axes(A, 2) if i != j)
+                # Diagonal cover property
+                @test all(a[i]^2 + d[i] >= abs(A[i, i]) - 1e-12 for i in axes(A, 1))
+                # d is non-negative
+                @test all(d[i] >= 0 for i in axes(A, 1))
+                # d is as tight as possible: d[i] == max(0, |A[i,i]| - a[i]^2)
+                @test all(d[i] ≈ max(0.0, abs(A[i, i]) - a[i]^2) for i in axes(A, 1))
+            end
         end
         # Non-square input is rejected
         @test_throws ArgumentError symdiagcover([1.0 2.0; 3.0 4.0; 5.0 6.0])
@@ -161,35 +165,36 @@ using Test
             include("testmatrices.jl")   # defines symmetric_matrices and general_matrices
         end
 
-        # symcover cover_lobjective should be close to optimal (symcover_lmin)
+        # symcover cover_qobjective should be close to optimal (symcover_qmin)
         sym_ratios = Float64[]
         for (_, A) in symmetric_matrices
             Af = Float64.(A)
+            # Initialization should give a valid cover
             a0 = symcover(Af; iter=0)
             @test all(a0[i] * a0[j] >= abs(Af[i, j]) - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
             a0 = symcover(Af / 100; iter=0)
             @test all(a0[i] * a0[j] >= abs(Af[i, j])/100 - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
-            a = symcover(Af; iter=10)
-            lopt  = cover_lobjective(symcover_lmin(Af), Af)
-            lfast = cover_lobjective(a, Af)
-            iszero(lopt) || push!(sym_ratios, lfast / lopt)
+            # Covers are nearly quadratically optimal
+            qopt  = cover_qobjective(symcover_qmin(Af), Af)
+            qfast = cover_qobjective(symcover(Af; iter=10), Af)
+            iszero(qopt) || push!(sym_ratios, qfast / qopt)
         end
-        @test median(sym_ratios) < 1.1
+        @test median(sym_ratios) < 1.02
 
-        # cover cover_lobjective should be close to optimal (cover_lmin)
+        # cover cover_qobjective should be close to optimal (cover_qmin)
         gen_ratios = Float64[]
         for (_, A) in general_matrices
             Af = Float64.(A)
+            # Initialization should give a valid cover
             a0, b0  = cover(Af; iter=0)
             @test all(a0[i] * b0[j] >= abs(Af[i, j]) - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
             a0, b0  = cover(Af / 100; iter=0)
             @test all(a0[i] * b0[j] >= abs(Af[i, j])/100 - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
-            al, bl = cover_lmin(Af)
-            a,  b  = cover(Af; iter=10)
-            lopt  = cover_lobjective(al, bl, Af)
-            lfast = cover_lobjective(a,  b,  Af)
-            iszero(lopt) || push!(gen_ratios, lfast / lopt)
+            # Covers are nearly quadratically optimal
+            qopt  = cover_qobjective(cover_qmin(Af)..., Af)
+            qfast = cover_qobjective(cover(Af; iter=10)..., Af)
+            iszero(qopt) || push!(gen_ratios, qfast / qopt)
         end
-        @test median(gen_ratios) < 1.1
+        @test median(gen_ratios) < 1.02
     end
 end
