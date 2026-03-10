@@ -1,6 +1,7 @@
 using ScaleInvariantAnalysis
 using ScaleInvariantAnalysis: divmag, dotabs
 using JuMP, HiGHS   # triggers the SIAJuMP extension (symcover_lmin, cover_lmin, etc.)
+using SparseArrays  # triggers the SIASparseArrays extension
 using LinearAlgebra
 using Statistics: median
 using Test
@@ -158,6 +159,48 @@ using Test
             @test cover_qobjective(a_qmin, b_qmin, A) <= cover_qobjective(a_fast, b_fast, A) + 1e-8
             @test cover_qobjective(a_qmin, b_qmin, A) <= cover_qobjective(a_lmin, b_lmin, A) + 1e-8
         end
+    end
+
+    @testset "SparseMatrixCSC" begin
+        for Adense in ([2.0 1.0; 1.0 3.0], [1.0 -0.2; -0.2 0.0], [0.0 12.0 9.0; 12.0 7.0 12.0; 9.0 12.0 0.0],
+                       [100.0 1.0; 1.0 0.01])
+            for A in (sparse(Adense), Symmetric(sparse(tril(Adense)), :L), Symmetric(sparse(triu(Adense)), :U),
+                      Hermitian(sparse(tril(Adense)), :L), Hermitian(sparse(triu(Adense)), :U))
+                a = symcover(A)
+                # Cover property
+                @test all(a[i] * a[j] >= abs(Adense[i, j]) - 1e-12 for i in axes(Adense, 1), j in axes(Adense, 2))
+                # Objectives match dense
+                @test cover_lobjective(a, A) ≈ cover_lobjective(a, Adense)
+                @test cover_qobjective(a, A) ≈ cover_qobjective(a, Adense)
+            end
+        end
+        for Adense in ([2.0 1.0; 1.0 3.0], [0.0 1.0; -2.0 0.0], [1.0 2.0 3.0; 4.0 5.0 6.0])
+            A = sparse(Adense)
+            a, b = cover(A)
+            @test all(a[i] * b[j] >= abs(Adense[i, j]) - 1e-12 for i in axes(Adense, 1), j in axes(Adense, 2))
+            @test cover_lobjective(a, b, A) ≈ cover_lobjective(a, b, Adense)
+            @test cover_qobjective(a, b, A) ≈ cover_qobjective(a, b, Adense)
+        end
+        for Adense in ([2.0 1.0; 1.0 3.0], [4.0 1e-8; 1e-8 1.0], [4.0 2.0 1.0; 2.0 3.0 2.0; 1.0 2.0 5.0])
+            for A in (sparse(Adense), Symmetric(sparse(tril(Adense)), :L), Symmetric(sparse(triu(Adense)), :U),
+                      Hermitian(sparse(tril(Adense)), :L), Hermitian(sparse(triu(Adense)), :U))
+                d, a = symdiagcover(A)
+                # Off-diagonal cover property
+                @test all(a[i] * a[j] >= abs(Adense[i, j]) - 1e-12 for i in axes(Adense, 1), j in axes(Adense, 2) if i != j)
+                # Diagonal cover property
+                @test all(a[i]^2 + d[i] >= abs(Adense[i, i]) - 1e-12 for i in axes(Adense, 1))
+                # d is non-negative
+                @test all(d[i] >= 0 for i in axes(Adense, 1))
+            end
+        end
+        # Zero-diagonal sparse matrix
+        A0 = sparse([0.0 1.0; 1.0 0.0])
+        @test symcover(A0) == [1.0, 1.0]
+        # Diagonal sparse matrix: a should be zero, d covers diagonal
+        Adiag = sparse(Diagonal([4.0, 9.0]))
+        d, a = symdiagcover(Adiag)
+        @test all(iszero, a)
+        @test d ≈ [4.0, 9.0]
     end
 
     @testset "quality vs optimal (testmatrices)" begin
