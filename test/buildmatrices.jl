@@ -2,6 +2,7 @@ using LinearAlgebra
 using Graphs: Graphs, connected_components
 using NautyGraphs: NautyGraphs, NautyGraph, NautyDiGraph, canonize!
 using Random
+using ProgressMeter
 
 
 # The following partially duplicate "testutils.jl", but with an emphasis on performance in generating
@@ -55,7 +56,7 @@ function logA_reset!(ps, logA)
 end
 
 
-function accumulate_examples!(fdA, NG, comps, A, model, ps, vars...)
+function accumulate_examples!(fdA, NG, comps, lenhist, i, A, model, ps, vars...)
     logA = log.(abs.(A))
     logA_reset!(ps, logA)
     dA = fdA(model, A, logA, vars...)
@@ -69,6 +70,7 @@ function accumulate_examples!(fdA, NG, comps, A, model, ps, vars...)
     end
     if !haskey(comps, edges)
         comps[edges] = A[p, p]
+        push!(lenhist, i)
     end
 end
 
@@ -77,6 +79,7 @@ function dA_symmetric(model, A, logA, αvariable)
             JuMP.optimize!(model)
             JuMP.value.(αvariable)
         catch err
+            # xref https://github.com/jump-dev/HiGHS.jl/issues/322
             @warn "Optimization failed for matrix $A: $err"
             return
         end
@@ -98,19 +101,21 @@ Random.seed!(1234)
 
 valrange = 1:20
 comps_sym = Dict{Vector{Tuple{Int,Int}}, Matrix{Int}}()
+lenhist_sym = Int[]
 Adummy = Symmetric([rand(valrange) for _ in 1:5, _ in 1:5])
 model, αvariable, ps = logsymcover_ref_setup(log.(abs.(Adummy)))
-for i = 1:10^5
+@showprogress "Building random symmetric matrices..." for i = 1:10^5
     A = Symmetric([rand(valrange) for _ in 1:5, _ in 1:5])
-    accumulate_examples!(dA_symmetric, NautyGraph, comps_sym, A, model, ps, αvariable)
+    accumulate_examples!(dA_symmetric, NautyGraph, comps_sym, lenhist_sym, i, A, model, ps, αvariable)
 end
 
 comps = Dict{Vector{Tuple{Int,Int}}, Matrix{Int}}()
+lenhist = Int[]
 Adummy = [rand(valrange) for _ in 1:5, _ in 1:5]
 model, αvariable, βvariable, ps = logcover_ref_setup(log.(abs.(Adummy)))
-for i = 1:10^5
+@showprogress "Building random general matrices..." for i = 1:10^5
     A = [rand(valrange) for _ in 1:5, _ in 1:5]
-    accumulate_examples!(dA_general, NautyDiGraph, comps, A, model, ps, αvariable, βvariable)
+    accumulate_examples!(dA_general, NautyDiGraph, comps, lenhist, i, A, model, ps, αvariable, βvariable)
 end
 
 
