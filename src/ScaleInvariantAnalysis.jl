@@ -2,7 +2,6 @@ module ScaleInvariantAnalysis
 
 using LinearAlgebra
 using SparseArrays
-using LoopVectorization
 using PrecompileTools
 
 export cover_lobjective, cover_qobjective, cover, symcover, symdiagcover, cover_lmin, symcover_lmin, cover_qmin, symcover_qmin
