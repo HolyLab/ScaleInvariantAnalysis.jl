@@ -309,7 +309,7 @@ function tighten_cover!(a::AbstractVector{T}, A::AbstractMatrix; iter::Int=3, ex
                 aratio[j] = aratioj
             end
         else
-            @turbo for j in eachindex(a)
+            for j in eachindex(a)
                 aratioj, aj = aratio[j], a[j]
                 for i in eachindex(a)
                     Aij = T(abs(A[i, j]))
@@ -333,7 +333,7 @@ function tighten_cover!(a::AbstractVector{T}, b::AbstractVector{T}, A::AbstractM
     for _ in 1:iter
         fill!(aratio, typemax(T))
         fill!(bratio, typemax(T))
-        @turbo for j in eachindex(b)
+        for j in eachindex(b)
             bratioj, bj = bratio[j], b[j]
             for i in eachindex(a)
                 Aij = T(abs(A[i, j]))
