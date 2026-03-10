@@ -1,6 +1,7 @@
 using ScaleInvariantAnalysis
 using ScaleInvariantAnalysis: divmag, dotabs
 using JuMP, HiGHS   # triggers the SIAJuMP extension (symcover_lmin, cover_lmin, etc.)
+using SparseArrays  # triggers the SIASparseArrays extension
 using LinearAlgebra
 using Statistics: median
 using Test
@@ -157,6 +158,124 @@ using Test
             # qmin achieves lower or equal cover_qobjective than both cover and cover_lmin
             @test cover_qobjective(a_qmin, b_qmin, A) <= cover_qobjective(a_fast, b_fast, A) + 1e-8
             @test cover_qobjective(a_qmin, b_qmin, A) <= cover_qobjective(a_lmin, b_lmin, A) + 1e-8
+        end
+    end
+
+    @testset "SparseMatrixCSC" begin
+        for Adense in ([2.0 1.0; 1.0 3.0], [1.0 -0.2; -0.2 0.0], [0.0 12.0 9.0; 12.0 7.0 12.0; 9.0 12.0 0.0],
+                       [100.0 1.0; 1.0 0.01])
+            for A in (sparse(Adense), Symmetric(sparse(tril(Adense)), :L), Symmetric(sparse(triu(Adense)), :U),
+                      Hermitian(sparse(tril(Adense)), :L), Hermitian(sparse(triu(Adense)), :U))
+                a = symcover(A)
+                # Cover property
+                @test all(a[i] * a[j] >= abs(Adense[i, j]) - 1e-12 for i in axes(Adense, 1), j in axes(Adense, 2))
+                # Objectives match dense
+                @test cover_lobjective(a, A) ≈ cover_lobjective(a, Adense)
+                @test cover_qobjective(a, A) ≈ cover_qobjective(a, Adense)
+            end
+        end
+        for Adense in ([2.0 1.0; 1.0 3.0], [0.0 1.0; -2.0 0.0], [1.0 2.0 3.0; 4.0 5.0 6.0])
+            A = sparse(Adense)
+            a, b = cover(A)
+            @test all(a[i] * b[j] >= abs(Adense[i, j]) - 1e-12 for i in axes(Adense, 1), j in axes(Adense, 2))
+            @test cover_lobjective(a, b, A) ≈ cover_lobjective(a, b, Adense)
+            @test cover_qobjective(a, b, A) ≈ cover_qobjective(a, b, Adense)
+        end
+        for Adense in ([2.0 1.0; 1.0 3.0], [4.0 1e-8; 1e-8 1.0], [4.0 2.0 1.0; 2.0 3.0 2.0; 1.0 2.0 5.0])
+            for A in (sparse(Adense), Symmetric(sparse(tril(Adense)), :L), Symmetric(sparse(triu(Adense)), :U),
+                      Hermitian(sparse(tril(Adense)), :L), Hermitian(sparse(triu(Adense)), :U))
+                d, a = symdiagcover(A)
+                # Off-diagonal cover property
+                @test all(a[i] * a[j] >= abs(Adense[i, j]) - 1e-12 for i in axes(Adense, 1), j in axes(Adense, 2) if i != j)
+                # Diagonal cover property
+                @test all(a[i]^2 + d[i] >= abs(Adense[i, i]) - 1e-12 for i in axes(Adense, 1))
+                # d is non-negative
+                @test all(d[i] >= 0 for i in axes(Adense, 1))
+            end
+        end
+        # Zero-diagonal sparse matrix
+        A0 = sparse([0.0 1.0; 1.0 0.0])
+        @test symcover(A0) == [1.0, 1.0]
+        # Diagonal sparse matrix: a should be zero, d covers diagonal
+        Adiag = sparse(Diagonal([4.0, 9.0]))
+        d, a = symdiagcover(Adiag)
+        @test all(iszero, a)
+        @test d ≈ [4.0, 9.0]
+    end
+
+    @testset "structured matrices" begin
+        @testset "Diagonal" begin
+            for dv in ([4.0, 9.0, 1.0], [4.0, 0.0, 1.0], [0.25, 100.0])
+                D = Diagonal(dv)
+                Ddense = Matrix(D)
+                a = symcover(D)
+                @test all(a[i] * a[j] >= abs(Ddense[i, j]) - 1e-12 for i in axes(Ddense, 1), j in axes(Ddense, 2))
+                @test cover_lobjective(a, D) ≈ cover_lobjective(a, Ddense)
+                @test cover_qobjective(a, D) ≈ cover_qobjective(a, Ddense)
+                d, a2 = symdiagcover(D)
+                @test all(iszero, a2)
+                @test d ≈ abs.(dv)
+                a3, b3 = cover(D)
+                @test all(a3[i] * b3[j] >= abs(Ddense[i, j]) - 1e-12 for i in axes(Ddense, 1), j in axes(Ddense, 2))
+                @test cover_lobjective(a3, b3, D) ≈ cover_lobjective(a3, b3, Ddense)
+                @test cover_qobjective(a3, b3, D) ≈ cover_qobjective(a3, b3, Ddense)
+            end
+            @test all(iszero, symcover(Diagonal([1.0, 2.0]); exclude_diagonal=true))
+        end
+
+        @testset "PlusMinus1Banded" begin
+            asym_cases = [
+                Bidiagonal([3.0, 2.0, 1.0], [6.0, 0.5], :U),
+                Bidiagonal([3.0, 2.0, 1.0], [6.0, 0.5], :L),
+                Tridiagonal([1.0, 0.5], [3.0, 2.0, 1.0], [4.0, 0.5]),
+            ]
+            for A in asym_cases
+                Adense = Matrix(A)
+                n = size(A, 1)
+                a, b = cover(A)
+                @test all(a[i] * b[j] >= abs(Adense[i, j]) - 1e-12 for i in 1:n, j in 1:n)
+                @test cover_lobjective(a, b, A) ≈ cover_lobjective(a, b, Adense)
+                @test cover_qobjective(a, b, A) ≈ cover_qobjective(a, b, Adense)
+            end
+            sym_cases = [
+                SymTridiagonal([4.0, 3.0, 1.0], [2.0, 0.5]),
+                SymTridiagonal([0.0, 3.0, 0.0], [2.0, 0.5]),
+                # Tridiagonal that the caller asserts is symmetric
+                Tridiagonal([2.0, 0.5], [4.0, 3.0, 1.0], [2.0, 0.5]),
+            ]
+            for A in sym_cases
+                Adense = Matrix(A)
+                n = size(A, 1)
+                a, b = cover(A)
+                @test all(a[i] * b[j] >= abs(Adense[i, j]) - 1e-12 for i in 1:n, j in 1:n)
+                for prioritize in (:speed, :quality)
+                    a = symcover(A; prioritize)
+                    @test all(a[i] * a[j] >= abs(Adense[i, j]) - 1e-12 for i in 1:n, j in 1:n)
+                    @test cover_lobjective(a, A) ≈ cover_lobjective(a, Adense)
+                    @test cover_qobjective(a, A) ≈ cover_qobjective(a, Adense)
+                end
+                d, a = symdiagcover(A)
+                @test all(a[i] * a[j] >= abs(Adense[i, j]) - 1e-12 for i in 1:n, j in 1:n if i != j)
+                @test all(a[i]^2 + d[i] >= abs(Adense[i, i]) - 1e-12 for i in 1:n)
+                @test all(d[i] >= 0 for i in 1:n)
+            end
+        end
+
+        @testset "Adjoint and Transpose" begin
+            for Adense in ([1.0 2.0; 3.0 4.0], [1.0 2.0 3.0; 4.0 5.0 6.0])
+                for wrapper in (adjoint, transpose)
+                    A = wrapper(Adense)
+                    Adense_wrap = Matrix(A)
+                    a, b = cover(A)
+                    @test all(a[i] * b[j] >= abs(Adense_wrap[i, j]) - 1e-12
+                              for i in axes(Adense_wrap, 1), j in axes(Adense_wrap, 2))
+                    @test cover_lobjective(a, b, A) ≈ cover_lobjective(a, b, Adense_wrap)
+                    @test cover_qobjective(a, b, A) ≈ cover_qobjective(a, b, Adense_wrap)
+                    # Objectives are the same as computing cover on the parent and swapping
+                    a0, b0 = cover(Adense)
+                    @test cover_lobjective(a, b, A) ≈ cover_lobjective(a0, b0, Adense)
+                end
+            end
         end
     end
 
