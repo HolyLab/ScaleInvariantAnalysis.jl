@@ -404,3 +404,35 @@ function cover_qmin end
 Similar to [`cover_qmin`](@ref), but returns a linear-minimal cover of `A`.
 """
 function cover_lmin end
+
+# ============================================================
+# Adjoint and Transpose wrappers
+#
+# If B = adjoint(P) or transpose(P), then |B[i,j]| = |P[j,i]|, so a cover
+# (a, b) of B satisfies a[i]*b[j] >= |P[j,i]|, which is exactly a cover
+# (b, a) of P.  Therefore: unwrap the parent, compute its cover, and swap.
+# ============================================================
+
+cover_lobjective(a, b, A::Adjoint)   = cover_lobjective(b, a, parent(A))
+cover_lobjective(a, b, A::Transpose) = cover_lobjective(b, a, parent(A))
+
+cover_qobjective(a, b, A::Adjoint)   = cover_qobjective(b, a, parent(A))
+cover_qobjective(a, b, A::Transpose) = cover_qobjective(b, a, parent(A))
+
+function tighten_cover!(a::AbstractVector{T}, b::AbstractVector{T}, A::Adjoint; kwargs...) where T
+    tighten_cover!(b, a, parent(A); kwargs...)
+    return a, b
+end
+function tighten_cover!(a::AbstractVector{T}, b::AbstractVector{T}, A::Transpose; kwargs...) where T
+    tighten_cover!(b, a, parent(A); kwargs...)
+    return a, b
+end
+
+function cover(A::Adjoint; kwargs...)
+    a, b = cover(parent(A); kwargs...)
+    return b, a
+end
+function cover(A::Transpose; kwargs...)
+    a, b = cover(parent(A); kwargs...)
+    return b, a
+end

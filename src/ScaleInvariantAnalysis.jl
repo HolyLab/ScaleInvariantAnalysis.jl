@@ -7,6 +7,7 @@ export cover_lobjective, cover_qobjective, cover, symcover, symdiagcover, cover_
 export dotabs
 
 include("covers.jl")
+include("structured.jl")
 
 
 """
