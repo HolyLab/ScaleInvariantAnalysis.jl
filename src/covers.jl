@@ -29,15 +29,19 @@ cover_qobjective(a, b, A) = sum(log(a[i] * b[j] / abs(A[i, j]))^2 for i in axes(
 cover_qobjective(a, A) = cover_qobjective(a, a, A)
 
 """
-    a = symcover(A; iter=3)
+    a = symcover(A; prioritize::Symbol=:quality, iter=3)
 
 Given a square matrix `A` assumed to be symmetric, return a vector `a`
 representing the symmetric cover of `A`, so that `a[i] * a[j] >= abs(A[i, j])`
 for all `i`, `j`.
 
-`a` may not be minimal, but it is tightened iteratively, with `iter` specifying
-the number of iterations (more iterations make tighter covers).
-`symcover` is fast and generally recommended for production use.
+`prioritize=:quality` yields a cover that is generally closer to being
+quadratically optimal, while `prioritize=:speed` is faster. In either case,
+after initialization `a` is tightened iteratively, with `iter` specifying the
+number of iterations (more iterations make tighter covers).
+
+Regardless of which `prioritize` option is chosen, `symcover` is fast and
+generally recommended for production use.
 
 See also: [`symcover_lmin`](@ref), [`symcover_qmin`](@ref), [`cover`](@ref).
 
@@ -57,16 +61,15 @@ julia> a * a'
  1.0  0.25
 ```
 """
-function symcover(A::AbstractMatrix; exclude_diagonal::Bool=false, kwargs...)
+function symcover(A::AbstractMatrix; exclude_diagonal::Bool=false, prioritize::Symbol=:quality, kwargs...)
+    prioritize in (:quality, :speed) || throw(ArgumentError("prioritize must be :quality or :speed"))
     ax = axes(A, 1)
     axes(A, 2) == ax || throw(ArgumentError("symcover requires a square matrix"))
     a = similar(A, float(eltype(A)), ax)
-    if exclude_diagonal
-        fill!(a, zero(eltype(a)))
+    if prioritize == :quality
+        _symcover_init_quadratic!(a, A; exclude_diagonal)
     else
-        for j in ax
-            a[j] = sqrt(abs(A[j, j]))
-        end
+        _symcover_init_fast!(a, A; exclude_diagonal)
     end
     # Iterate over the diagonals of A, and update a[i] and a[j] to satisfy |A[i, j]| ≤ a[i] * a[j] whenever this constraint is violated
     # Iterating over the diagonals gives a more "balanced" result and typically results in lower loss than iterating in a triangular pattern.
@@ -92,6 +95,49 @@ function symcover(A::AbstractMatrix; exclude_diagonal::Bool=false, kwargs...)
         end
     end
     return tighten_cover!(a, A; exclude_diagonal, kwargs...)
+end
+
+function _symcover_init_quadratic!(a::AbstractVector{T}, A::AbstractMatrix; exclude_diagonal::Bool=false) where T
+    ax = eachindex(a)
+    loga = fill!(similar(a), zero(T))
+    nza  = fill(0, ax)
+    for j in ax
+        for i in first(ax):j - exclude_diagonal
+            Aij = abs(A[i, j])
+            iszero(Aij) && continue
+            lAij = log(Aij)
+            loga[i] += lAij
+            nza[i] += 1
+            if j != i
+                loga[j] += lAij
+                nza[j] += 1
+            end
+        end
+    end
+    nztotal = sum(nza)
+    halfmu = iszero(nztotal) ? zero(T) : sum(loga) / (2 * nztotal)
+    for i in ax
+        a[i] = ai = iszero(nza[i]) ? zero(T) : exp(loga[i] / nza[i] - halfmu)
+        if !exclude_diagonal
+            # The rest of the algorithm will ensure the initialization is a valid cover, but we have to do the diagonal here.
+            Aii = abs(A[i, i])
+            if ai^2 < Aii
+                a[i] = sqrt(Aii)
+            end
+        end
+    end
+    return a
+end
+
+function _symcover_init_fast!(a::AbstractVector{T}, A::AbstractMatrix; exclude_diagonal::Bool=false) where T
+    if exclude_diagonal
+        fill!(a, zero(T))
+    else
+        for j in eachindex(a)
+            a[j] = sqrt(abs(A[j, j]))
+        end
+    end
+    return a
 end
 
 """

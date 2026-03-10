@@ -161,35 +161,36 @@ using Test
             include("testmatrices.jl")   # defines symmetric_matrices and general_matrices
         end
 
-        # symcover cover_lobjective should be close to optimal (symcover_lmin)
+        # symcover cover_qobjective should be close to optimal (symcover_qmin)
         sym_ratios = Float64[]
         for (_, A) in symmetric_matrices
             Af = Float64.(A)
+            # Initialization should give a valid cover
             a0 = symcover(Af; iter=0)
             @test all(a0[i] * a0[j] >= abs(Af[i, j]) - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
             a0 = symcover(Af / 100; iter=0)
             @test all(a0[i] * a0[j] >= abs(Af[i, j])/100 - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
-            a = symcover(Af; iter=10)
-            lopt  = cover_lobjective(symcover_lmin(Af), Af)
-            lfast = cover_lobjective(a, Af)
-            iszero(lopt) || push!(sym_ratios, lfast / lopt)
+            # Covers are nearly quadratically optimal
+            qopt  = cover_qobjective(symcover_qmin(Af), Af)
+            qfast = cover_qobjective(symcover(Af; iter=10), Af)
+            iszero(qopt) || push!(sym_ratios, qfast / qopt)
         end
-        @test median(sym_ratios) < 1.1
+        @test median(sym_ratios) < 1.02
 
-        # cover cover_lobjective should be close to optimal (cover_lmin)
+        # cover cover_qobjective should be close to optimal (cover_qmin)
         gen_ratios = Float64[]
         for (_, A) in general_matrices
             Af = Float64.(A)
+            # Initialization should give a valid cover
             a0, b0  = cover(Af; iter=0)
             @test all(a0[i] * b0[j] >= abs(Af[i, j]) - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
             a0, b0  = cover(Af / 100; iter=0)
             @test all(a0[i] * b0[j] >= abs(Af[i, j])/100 - 1e-12 for i in axes(Af, 1), j in axes(Af, 2))
-            al, bl = cover_lmin(Af)
-            a,  b  = cover(Af; iter=10)
-            lopt  = cover_lobjective(al, bl, Af)
-            lfast = cover_lobjective(a,  b,  Af)
-            iszero(lopt) || push!(gen_ratios, lfast / lopt)
+            # Covers are nearly quadratically optimal
+            qopt  = cover_qobjective(cover_qmin(Af)..., Af)
+            qfast = cover_qobjective(cover(Af; iter=10)..., Af)
+            iszero(qopt) || push!(gen_ratios, qfast / qopt)
         end
-        @test median(gen_ratios) < 1.1
+        @test median(gen_ratios) < 1.02
     end
 end
