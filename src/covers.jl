@@ -35,10 +35,11 @@ Given a square matrix `A` assumed to be symmetric, return a vector `a`
 representing the symmetric cover of `A`, so that `a[i] * a[j] >= abs(A[i, j])`
 for all `i`, `j`.
 
-`prioritize=:quality` yields a cover that is generally closer to being
-quadratically optimal, while `prioritize=:speed` is faster. In either case,
-after initialization `a` is tightened iteratively, with `iter` specifying the
-number of iterations (more iterations make tighter covers).
+`prioritize=:quality` yields a cover that is typically closer to being
+quadratically optimal, though there are exceptions.
+`prioritize=:speed` is often about twice as fast (with default `iter=3`). In
+either case, after initialization `a` is tightened iteratively, with `iter`
+specifying the number of iterations (more iterations make tighter covers).
 
 Regardless of which `prioritize` option is chosen, `symcover` is fast and
 generally recommended for production use.
@@ -47,10 +48,10 @@ See also: [`symcover_lmin`](@ref), [`symcover_qmin`](@ref), [`cover`](@ref).
 
 # Examples
 
-```jldoctest
+```jldoctest; filter = r"(\\d+\\.\\d{6})\\d+" => s"\\1"
 julia> A = [4 -1; -1 0];
 
-julia> a = symcover(A)
+julia> a = symcover(A; prioritize=:speed)
 2-element Vector{Float64}:
  2.0
  0.5
@@ -59,6 +60,32 @@ julia> a * a'
 2×2 Matrix{Float64}:
  4.0  1.0
  1.0  0.25
+
+julia> A = [0 12 9; 12 7 12; 9 12 0];
+
+julia> a = symcover(A; prioritize=:quality)
+3-element Vector{Float64}:
+ 3.4021999694928753
+ 3.54528705924512
+ 3.3847752803845172
+
+julia> a * a'
+3×3 Matrix{Float64}:
+ 11.575   12.0618  11.5157
+ 12.0618  12.5691  12.0
+ 11.5157  12.0     11.4567
+
+julia> a = symcover(A; prioritize=:speed)
+3-element Vector{Float64}:
+ 4.535573676110727
+ 2.6457513110645907
+ 4.535573676110727
+
+julia> a * a'
+3×3 Matrix{Float64}:
+ 20.5714  12.0  20.5714
+ 12.0      7.0  12.0
+ 20.5714  12.0  20.5714
 ```
 """
 function symcover(A::AbstractMatrix; exclude_diagonal::Bool=false, prioritize::Symbol=:quality, kwargs...)
