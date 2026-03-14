@@ -219,7 +219,7 @@ end
 # SparseMatrixCSC methods
 # ============================================================
 
-function ScaleInvariantAnalysis.cover_lobjective(a, b, A::SparseMatrixCSC)
+function ScaleInvariantAnalysis.cover_lobjective(a::AbstractVector, b::AbstractVector, A::SparseMatrixCSC)
     rv = rowvals(A)
     nzs = nonzeros(A)
     s = zero(float(promote_type(eltype(a), eltype(b), eltype(A))))
@@ -234,7 +234,7 @@ function ScaleInvariantAnalysis.cover_lobjective(a, b, A::SparseMatrixCSC)
     return s
 end
 
-function ScaleInvariantAnalysis.cover_qobjective(a, b, A::SparseMatrixCSC)
+function ScaleInvariantAnalysis.cover_qobjective(a::AbstractVector, b::AbstractVector, A::SparseMatrixCSC)
     rv = rowvals(A)
     nzs = nonzeros(A)
     s = zero(float(promote_type(eltype(a), eltype(b), eltype(A))))
@@ -338,11 +338,11 @@ end
 # Symmetric{<:Any, <:SparseMatrixCSC} methods
 # ============================================================
 
-function ScaleInvariantAnalysis.cover_lobjective(a, b, S::Symmetric{<:Any, <:SparseMatrixCSC})
+function ScaleInvariantAnalysis.cover_lobjective(a::AbstractVector, b::AbstractVector, S::Symmetric{<:Any, <:SparseMatrixCSC})
     return _cover_lobjective_sym_sparse(a, b, parent(S), S.uplo)
 end
 
-function ScaleInvariantAnalysis.cover_qobjective(a, b, S::Symmetric{<:Any, <:SparseMatrixCSC})
+function ScaleInvariantAnalysis.cover_qobjective(a::AbstractVector, b::AbstractVector, S::Symmetric{<:Any, <:SparseMatrixCSC})
     return _cover_qobjective_sym_sparse(a, b, parent(S), S.uplo)
 end
 
@@ -385,11 +385,11 @@ end
 # (Real-valued Hermitian is equivalent to Symmetric)
 # ============================================================
 
-function ScaleInvariantAnalysis.cover_lobjective(a, b, H::Hermitian{<:Real, <:SparseMatrixCSC})
+function ScaleInvariantAnalysis.cover_lobjective(a::AbstractVector, b::AbstractVector, H::Hermitian{<:Real, <:SparseMatrixCSC})
     return _cover_lobjective_sym_sparse(a, b, parent(H), H.uplo)
 end
 
-function ScaleInvariantAnalysis.cover_qobjective(a, b, H::Hermitian{<:Real, <:SparseMatrixCSC})
+function ScaleInvariantAnalysis.cover_qobjective(a::AbstractVector, b::AbstractVector, H::Hermitian{<:Real, <:SparseMatrixCSC})
     return _cover_qobjective_sym_sparse(a, b, parent(H), H.uplo)
 end
 

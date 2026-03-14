@@ -7,6 +7,17 @@ using Statistics: median
 using Test
 
 @testset "ScaleInvariantAnalysis.jl" begin
+    @testset "Ambiguities" begin
+        methparam(m, i) = Base.unwrap_unionall(Base.unwrap_unionall(m.sig).parameters[i])
+
+        ambs = detect_ambiguities(ScaleInvariantAnalysis)
+        # Remove any "unfixable" ambiguities that should not be relevant in practice
+        filter!(ambs) do (m1, m2)
+            m1.name === :mul! && (:MutableArithmetics ∈ (nameof(m1.module), nameof(m2.module))) && return false
+        end
+        @test isempty(ambs)
+    end
+
     @testset "symcover" begin
         # Cover property: a[i]*a[j] >= abs(A[i,j]) for all i, j
         for A in ([2.0 1.0; 1.0 3.0], [1.0 -0.2; -0.2 0.0], [1.0 0.0; 0.0 0.0],

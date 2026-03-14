@@ -14,35 +14,45 @@ cover_lobjective(a, b, A) = sum(log(a[i] * b[j] / abs(A[i, j])) for i in axes(a,
 cover_lobjective(a, A) = cover_lobjective(a, a, A)
 
 """
-    cover_qobjective(a, b, A)
-    cover_qobjective(a, A)
+    cover_qobjective(a::AbstractVector, b::AbstractVector, A::AbstractMatrix)
+    cover_qobjective(a::AbstractVector, A::AbstractMatrix)
+    cover_qobjective(alpha::AbstractVector, logA::AbstractMatrix, A::AbstractMatrix)   # alpha = log.(a)
 
 Compute the sum of squared log-domain excesses over nonzero entries of `A`:
 
     ∑_{i,j : A[i,j] ≠ 0} log(a[i] * b[j] / |A[i,j]|)²
 
-The two-argument form is for symmetric matrices where the cover is `a*a'`.`
+The two-argument form is for symmetric matrices where the cover is `a*a'`.
+The `alpha/logA/A` form is used when you have `log.(abs.(A))` pre-computed and want to avoid taking additional logarithms.
 
 See also: [`cover_lobjective`](@ref) for the sum of log-domain excesses.
 """
-cover_qobjective(a, b, A) = sum(log(a[i] * b[j] / abs(A[i, j]))^2 for i in axes(a, 1), j in axes(b, 1) if A[i, j] != 0)
-cover_qobjective(a, A) = cover_qobjective(a, a, A)
+cover_qobjective(a::AbstractVector, b::AbstractVector, A::AbstractMatrix) = sum(log(a[i] * b[j] / abs(A[i, j]))^2 for i in axes(a, 1), j in axes(b, 1) if A[i, j] != 0)
+cover_qobjective(a::AbstractVector, A::AbstractMatrix) = cover_qobjective(a, a, A)
+
+function cover_qobjective(alpha::AbstractVector{T}, logA::AbstractMatrix, A::AbstractMatrix) where T
+    # This is used internally and needs to be higher performance than the version above
+    objval = zero(T)
+    ax = eachindex(alpha)
+    for j in ax
+        alphaj = alpha[j]
+        for i in j:last(ax)
+            iszero(A[i, j]) && continue
+            Δobjval = (alpha[i] + alphaj - logA[i, j])^2
+            objval += Δobjval * (1 + (i != j))
+        end
+    end
+    return objval
+end
 
 """
-    a = symcover(A; prioritize::Symbol=:quality, iter=3)
+    a = symcover(A; iter=3)
 
 Given a square matrix `A` assumed to be symmetric, return a vector `a`
 representing the symmetric cover of `A`, so that `a[i] * a[j] >= abs(A[i, j])`
 for all `i`, `j`.
 
-`prioritize=:quality` yields a cover that is typically closer to being
-quadratically optimal, though there are exceptions.
-`prioritize=:speed` is often about twice as fast (with default `iter=3`). In
-either case, after initialization `a` is tightened iteratively, with `iter`
-specifying the number of iterations (more iterations make tighter covers).
-
-Regardless of which `prioritize` option is chosen, `symcover` is fast and
-generally recommended for production use.
+`symcover` is fast and generally recommended for production use.
 
 See also: [`symcover_lmin`](@ref), [`symcover_qmin`](@ref), [`cover`](@ref).
 
@@ -51,7 +61,7 @@ See also: [`symcover_lmin`](@ref), [`symcover_qmin`](@ref), [`cover`](@ref).
 ```jldoctest; filter = r"(\\d+\\.\\d{6})\\d+" => s"\\1"
 julia> A = [4 -1; -1 0];
 
-julia> a = symcover(A; prioritize=:speed)
+julia> a = symcover(A)
 2-element Vector{Float64}:
  2.0
  0.5
@@ -88,75 +98,77 @@ julia> a * a'
  20.5714  12.0  20.5714
 ```
 """
-function symcover(A::AbstractMatrix; exclude_diagonal::Bool=false, prioritize::Symbol=:quality, kwargs...)
-    prioritize in (:quality, :speed) || throw(ArgumentError("prioritize must be :quality or :speed"))
+function symcover(A::AbstractMatrix; exclude_diagonal::Bool=false, kwargs...)
     ax = axes(A, 1)
     axes(A, 2) == ax || throw(ArgumentError("symcover requires a square matrix"))
+    logA = log.(abs.(A))
+    alpha, afrak, B = symcover_init_unconstrained(logA, A; exclude_diagonal)
+    alphastar = copy(alpha)
+    symcover_makefeasible_diags!(alpha, logA, A; exclude_diagonal)
+    tighten_cover!(alpha, logA, A; exclude_diagonal, kwargs...)
+    return exp.(simplex!(alpha, logA, A, alphastar, B, afrak; exclude_diagonal, kwargs...))
+end
+
+"""
+    a = symcover_heuristic(A; iter=3)
+
+Given a square matrix `A` assumed to be symmetric, return a vector `a`
+representing the symmetric cover of `A`, so that `a[i] * a[j] >= abs(A[i, j])`
+for all `i`, `j`.
+
+This is a particularly fast implementation: it avoids taking logarithms and does
+not attempt to achieve quadratic optimality. After initialization, `a` is
+tightened iteratively, with `iter` specifying the number of iterations (more
+iterations make tighter covers).
+
+See also: [`symcover`](@ref), [`symcover_lmin`](@ref), [`symcover_qmin`](@ref), [`cover`](@ref).
+
+# Examples
+
+```jldoctest; filter = r"(\\d+\\.\\d{6})\\d+" => s"\\1"
+julia> A = [4 -1; -1 0];
+
+julia> a = symcover_heuristic(A)
+2-element Vector{Float64}:
+ 2.0
+ 0.5
+
+julia> a * a'
+2×2 Matrix{Float64}:
+ 4.0  1.0
+ 1.0  0.25
+
+julia> A = [0 12 9; 12 7 12; 9 12 0];
+
+julia> a = symcover(A)
+3-element Vector{Float64}:
+ 3.4021999694928753
+ 3.54528705924512
+ 3.3847752803845172
+
+julia> a * a'
+3×3 Matrix{Float64}:
+ 11.575   12.0618  11.5157
+ 12.0618  12.5691  12.0
+ 11.5157  12.0     11.4567
+
+julia> a = symcover_heuristic(A)
+3-element Vector{Float64}:
+ 4.535573676110727
+ 2.6457513110645907
+ 4.535573676110727
+
+julia> a * a'
+3×3 Matrix{Float64}:
+ 20.5714  12.0  20.5714
+ 12.0      7.0  12.0
+ 20.5714  12.0  20.5714
+```
+"""
+function symcover_heuristic(A::AbstractMatrix; exclude_diagonal::Bool=false, kwargs...)
+    ax = axes(A, 1)
+    axes(A, 2) == ax || throw(ArgumentError("symcover_heuristic requires a square matrix"))
     a = similar(A, float(eltype(A)), ax)
-    if prioritize == :quality
-        _symcover_init_quadratic!(a, A; exclude_diagonal)
-    else
-        _symcover_init_fast!(a, A; exclude_diagonal)
-    end
-    # Iterate over the diagonals of A, and update a[i] and a[j] to satisfy |A[i, j]| ≤ a[i] * a[j] whenever this constraint is violated
-    # Iterating over the diagonals gives a more "balanced" result and typically results in lower loss than iterating in a triangular pattern.
-    for k in 1:length(ax)-1
-        for j in first(ax):last(ax)-k
-            i = j + k
-            Aij, ai, aj = abs(A[i, j]), a[i], a[j]
-            if iszero(aj)
-                if !iszero(ai)
-                    a[j] = Aij / ai
-                else
-                    a[i] = a[j] = sqrt(Aij)
-                end
-            elseif iszero(ai)
-                a[i] = Aij / aj
-            else
-                aprod = ai * aj
-                aprod >= Aij && continue
-                s = sqrt(Aij / aprod)
-                a[i] = s * ai
-                a[j] = s * aj
-            end
-        end
-    end
-    return tighten_cover!(a, A; exclude_diagonal, kwargs...)
-end
-
-function _symcover_init_quadratic!(a::AbstractVector{T}, A::AbstractMatrix; exclude_diagonal::Bool=false) where T
-    ax = eachindex(a)
-    loga = fill!(similar(a), zero(T))
-    nza  = fill(0, ax)
-    for j in ax
-        for i in first(ax):j - exclude_diagonal
-            Aij = abs(A[i, j])
-            iszero(Aij) && continue
-            lAij = log(Aij)
-            loga[i] += lAij
-            nza[i] += 1
-            if j != i
-                loga[j] += lAij
-                nza[j] += 1
-            end
-        end
-    end
-    nztotal = sum(nza)
-    halfmu = iszero(nztotal) ? zero(T) : sum(loga) / (2 * nztotal)
-    for i in ax
-        a[i] = ai = iszero(nza[i]) ? zero(T) : exp(loga[i] / nza[i] - halfmu)
-        if !exclude_diagonal
-            # The rest of the algorithm will ensure the initialization is a valid cover, but we have to do the diagonal here.
-            Aii = abs(A[i, i])
-            if ai^2 < Aii
-                a[i] = sqrt(Aii)
-            end
-        end
-    end
-    return a
-end
-
-function _symcover_init_fast!(a::AbstractVector{T}, A::AbstractMatrix; exclude_diagonal::Bool=false) where T
     if exclude_diagonal
         fill!(a, zero(T))
     else
@@ -164,7 +176,8 @@ function _symcover_init_fast!(a::AbstractVector{T}, A::AbstractMatrix; exclude_d
             a[j] = sqrt(abs(A[j, j]))
         end
     end
-    return a
+    symcover_makefeasible_diags!(a, A)   # this excludes the diagonal (we already handled if, if we are supposed to)
+    return tighten_cover!(a, A; exclude_diagonal, kwargs...)
 end
 
 """
@@ -284,250 +297,6 @@ function cover(A::AbstractMatrix; kwargs...)
     return tighten_cover!(a, b, A; kwargs...)
 end
 
-function symcover_init_new(logA::AbstractMatrix, A::AbstractMatrix)
-    ax = axes(A, 1)
-    alpha = similar(logA, ax)
-    nza  = zeros(Int, ax)
-    for j in ax
-        for i in j:last(ax)
-            iszero(A[i, j]) && continue
-            lAij = logA[i, j]
-            alpha[i] += lAij
-            nza[i] += 1
-            if j != i
-                alpha[j] += lAij
-                nza[j] += 1
-            end
-        end
-    end
-    nztotal = sum(nza)
-    halfmu = iszero(nztotal) ? zero(T) : sum(alpha) / (2 * nztotal)
-    alpha .= alpha ./ nza .- halfmu
-    return alpha
-end
-
-function symcover_makefeasible_shift!(alpha, logA, A)
-    dalpha = zero(eltype(alpha))
-    ax = eachindex(alpha)
-    for j in ax
-        alphaj = alpha[j]
-        for i in j:last(ax)
-            Aij = abs(A[i, j])
-            iszero(Aij) && continue
-            Δα = alpha[i] + alphaj - logA[i, j]
-            dalpha = max(dalpha, -Δα/2)
-        end
-    end
-    alpha .+= dalpha
-    return alpha
-end
-
-function symcover_makefeasible!(alpha, logA, A)
-    for j in eachindex(alpha)
-        iszero(A[j, j]) && continue
-        alpha[j] = max(alpha[j], logA[j, j]/2)
-    end
-    for k = 1:length(alpha)-1
-         for j in first(eachindex(alpha)):last(eachindex(alpha))-k
-            i = j + k
-            Aij = abs(A[i, j])
-            iszero(Aij) && continue
-            Δα = alpha[i] + alpha[j] - logA[i, j]
-            if Δα < zero(Δα)
-                alpha[i] -= Δα/2
-                alpha[j] -= Δα/2
-            end
-        end
-    end
-    return alpha
-end
-
-function symcover_tighten_alpha!(alpha::AbstractVector{T}, logA, A) where T
-    alphagap = fill!(similar(alpha), typemax(T))
-    ax = eachindex(alpha)
-    for j in ax
-        alphaj, alphagapj = alpha[j], alphagap[j]
-        for i in j:last(ax)
-            Aij = abs(A[i, j])
-            iszero(Aij) && continue
-            Δα = alpha[i] + alphaj - logA[i, j]
-            alphagap[i] = min(alphagap[i], Δα/2)
-            alphagapj = min(alphagapj, Δα/2)
-        end
-        alphagap[j] = alphagapj
-    end
-    alpha .-= alphagap
-    return alpha
-end
-
-function symcover_stepdirection!(p::AbstractVector, alpha::AbstractVector{T}, logA, A, alphastar, nza; tol=sqrt(eps(T))) where T
-    ax = eachindex(alpha)
-    copyto!(p, alphastar)
-    p .-= alpha
-    # Find the active constraints
-    actives = Vector{Tuple{Int, Int}}()
-    for j in eachindex(alpha)
-        alphaj = alpha[j]
-        for i in j:last(eachindex(alpha))
-            Aij = abs(A[i, j])
-            iszero(Aij) && continue
-            Δα = alpha[i] + alphaj - logA[i, j]
-            if Δα < tol
-                push!(actives, (i, j))
-            end
-        end
-    end
-    @show actives
-    J = zeros(T, length(actives), length(ax))
-    for (k, (i, j)) in enumerate(actives)
-        J[k, i] = 1
-        J[k, j] += 1
-    end
-    # Compute B \ J', where B = Diagonal(nza) + u*u' with u = nza/sqrt(sum(nza))
-    u = nza ./ sqrt(sum(nza))
-    B = Diagonal(nza) + u * u'
-    N = B \ J'
-    calBinv = J * N
-    @show calBinv
-    nu = pinv(calBinv) * (J * p)
-    p .-= N * nu
-    return p
-end
-
-function symcover_maxstep(p, alpha::AbstractVector{T}, logA, A; tol=sqrt(eps(T))) where T
-    ax = eachindex(alpha)
-    step = typemax(eltype(alpha))
-    for j in eachindex(alpha)
-        alphaj = alpha[j]
-        pj = p[j]
-        for i in j:last(ax)
-            Aij = abs(A[i, j])
-            iszero(Aij) && continue
-            Δα = alpha[i] + alphaj - logA[i, j]
-            Δα < tol && continue # should already be handled by the projection
-            Δp = p[i] + pj
-            if Δp < zero(Δp)
-                step = min(step, abs(Δα) / abs(Δp))
-            end
-        end
-    end
-    return step
-end
-
-function gap!(alphagap::AbstractVector{T}, alpha::AbstractVector{T}, logA::AbstractMatrix, A::AbstractMatrix) where T
-    ax = axes(A, 1)
-    axes(A, 2) == ax || throw(ArgumentError("`tighten_cover!(a, A)` requires a square matrix `A`"))
-    eachindex(alpha) == ax || throw(DimensionMismatch("indices of `alpha` must match the indexing of `A`"))
-    eachindex(alphagap) == ax || throw(DimensionMismatch("indices of `alphagap` must match the indexing of `A`"))
-    fill!(alphagap, typemax(T))
-    for j in eachindex(alpha)
-        alphagapj, alphaj = alphagap[j], alpha[j]
-        for i in j:last(ax)
-            iszero(A[i, j]) && continue
-            Δα = alpha[i] + alphaj - logA[i, j]
-            alphagap[i] = min(alphagap[i], Δα/2)
-            alphagapj = min(alphagapj, Δα/2)
-        end
-        alphagap[j] = alphagapj
-    end
-    return alphagap
-end
-
-function project_feas!(alpha::AbstractVector{T}, alphagap::AbstractVector{T}, logA::AbstractMatrix, A::AbstractMatrix) where T
-    ax = axes(A, 1)
-    axes(A, 2) == ax || throw(ArgumentError("`tighten_cover!(a, A)` requires a square matrix `A`"))
-    eachindex(alpha) == ax || throw(DimensionMismatch("indices of `alpha` must match the indexing of `A`"))
-    eachindex(alphagap) == ax || throw(DimensionMismatch("indices of `alphagap` must match the indexing of `A`"))
-    fill!(alphagap, typemin(T))
-    for j in eachindex(alpha)
-        alphagapj, alphaj = alphagap[j], alpha[j]
-        for i in j:last(ax)
-            iszero(A[i, j]) && continue
-            Δα = alpha[i] + alphaj - logA[i, j]
-            alphagap[i] = max(alphagap[i], Δα/2)
-            alphagapj = max(alphagapj, Δα/2)
-        end
-        alphagap[j] = alphagapj
-    end
-    alpha .+= alphagap
-end
-
-function descend!(alpha::AbstractVector{T}, alphastar::AbstractVector{T}, alphagap::AbstractVector{T}) where T
-    gap = maximum(alphagap)
-    Δalpha = alphagap # alphagap is temporary storage so we can abuse it here
-    Δalpha .= alphastar .- alpha
-    Δalphanorm = maximum(abs, Δalpha)
-    alpha .+= (gap/Δalphanorm) .* Δalpha
-    return alpha
-end
-
-
-function tighten_cover!(a::AbstractVector{T}, A::AbstractMatrix; iter::Int=3, exclude_diagonal::Bool=false) where T
-    ax = axes(A, 1)
-    axes(A, 2) == ax || throw(ArgumentError("`tighten_cover!(a, A)` requires a square matrix `A`"))
-    eachindex(a) == ax || throw(DimensionMismatch("indices of `a` must match the indexing of `A`"))
-    aratio = similar(a)
-    for _ in 1:iter
-        fill!(aratio, typemax(T))
-        if exclude_diagonal
-            for j in eachindex(a)
-                aratioj, aj = aratio[j], a[j]
-                for i in first(ax):j-1
-                    Aij = T(abs(A[i, j]))
-                    r = ifelse(iszero(Aij), typemax(T), a[i] * aj / Aij)
-                    aratio[i] = min(aratio[i], r)
-                    aratioj = min(aratioj, r)
-                end
-                for i in j+1:last(ax)
-                    Aij = T(abs(A[i, j]))
-                    r = ifelse(iszero(Aij), typemax(T), a[i] * aj / Aij)
-                    aratio[i] = min(aratio[i], r)
-                    aratioj = min(aratioj, r)
-                end
-                aratio[j] = aratioj
-            end
-        else
-            for j in eachindex(a)
-                aratioj, aj = aratio[j], a[j]
-                for i in eachindex(a)
-                    Aij = T(abs(A[i, j]))
-                    r = ifelse(iszero(Aij), typemax(T), a[i] * aj / Aij)
-                    aratio[i] = min(aratio[i], r)
-                    aratioj = min(aratioj, r)
-                end
-                aratio[j] = aratioj
-            end
-        end
-        a ./= sqrt.(aratio)
-    end
-    return a
-end
-
-function tighten_cover!(a::AbstractVector{T}, b::AbstractVector{T}, A::AbstractMatrix; iter::Int=3) where T
-    aratio = fill(typemax(T), eachindex(a))
-    bratio = fill(typemax(T), eachindex(b))
-    eachindex(a) == axes(A, 1) || throw(DimensionMismatch("indices of a must match row-indexing of A"))
-    eachindex(b) == axes(A, 2) || throw(DimensionMismatch("indices of b must match column-indexing of A"))
-    for _ in 1:iter
-        fill!(aratio, typemax(T))
-        fill!(bratio, typemax(T))
-        for j in eachindex(b)
-            bratioj, bj = bratio[j], b[j]
-            for i in eachindex(a)
-                Aij = T(abs(A[i, j]))
-                r = ifelse(iszero(Aij), typemax(T), a[i] * bj / Aij)
-                aratio[i] = min(aratio[i], r)
-                bratioj = min(bratioj, r)
-            end
-            bratio[j] = bratioj
-        end
-        a ./= sqrt.(aratio)
-        b ./= sqrt.(bratio)
-    end
-    return a, b
-end
-
-
 # The next four have methods that are defined in the extension module, but we
 # define the function and docstring here to avoid circular dependencies.
 
@@ -583,6 +352,283 @@ Similar to [`cover_qmin`](@ref), but returns a linear-minimal cover of `A`.
 """
 function cover_lmin end
 
+## Internals
+
+function symcover_init_unconstrained(logA::AbstractMatrix, A::AbstractMatrix; exclude_diagonal::Bool=false)
+    ax = axes(A, 1)
+    alpha = fill!(similar(logA, ax), zero(eltype(logA)))
+    nza = zeros(Int, ax)
+    for j in ax
+        for i in j+exclude_diagonal:last(ax)
+            iszero(A[i, j]) && continue
+            lAij = logA[i, j]
+            alpha[i] += lAij
+            nza[i] += 1
+            if j != i
+                alpha[j] += lAij
+                nza[j] += 1
+            end
+        end
+    end
+    afrak = copy(alpha)
+    u = nza ./ sqrt(sum(nza))
+    B = ShermanMorrisonMatrix(Diagonal(nza), u, u)
+    ldiv!(B, alpha)
+    return alpha, afrak, B
+end
+
+function symcover_makefeasible_diags!(a::AbstractVector, A::AbstractMatrix)
+    ax = axes(A, 1)
+    # Iterate over the diagonals of A, and update a[i] and a[j] to satisfy
+    #     |A[i, j]| ≤ a[i] * a[j]
+    # whenever this constraint is violated.
+    #
+    # Iterating over the diagonals gives a more "balanced" result and typically
+    # results in lower loss than iterating in a triangular pattern.
+    #
+    # Unlike the version for alpha below, the caller will have already handled
+    # the diagonal, if it is used at all.
+    for k in 1:length(ax)-1
+        for j in first(ax):last(ax)-k
+            i = j + k
+            Aij, ai, aj = abs(A[i, j]), a[i], a[j]
+            if iszero(aj)
+                if !iszero(ai)
+                    a[j] = Aij / ai
+                else
+                    a[i] = a[j] = sqrt(Aij)
+                end
+            elseif iszero(ai)
+                a[i] = Aij / aj
+            else
+                aprod = ai * aj
+                aprod >= Aij && continue
+                s = sqrt(Aij / aprod)
+                a[i] = s * ai
+                a[j] = s * aj
+            end
+        end
+    end
+    return a
+end
+
+# Similar to the method above, but operates on alpha, logA, and A
+function symcover_makefeasible_diags!(alpha::AbstractVector, logA::AbstractMatrix, A::AbstractMatrix; exclude_diagonal::Bool=false)
+    ax = eachindex(alpha)
+    if !exclude_diagonal
+        for j in ax
+            iszero(A[j, j]) && continue
+            alpha[j] = max(alpha[j], logA[j, j]/2)
+        end
+    end
+    for k = 1:length(alpha)-1
+         for j in first(ax):last(ax)-k
+            i = j + k
+            iszero(A[i, j]) && continue
+            Δα = alpha[i] + alpha[j] - logA[i, j]
+            if Δα < zero(Δα)
+                alpha[i] -= Δα/2
+                alpha[j] -= Δα/2
+            end
+        end
+    end
+    return alpha
+end
+
+# An alternative to the above, moving along the `e` axis until all constraints are satisfied
+function symcover_makefeasible_shift!(alpha, logA, A)
+    dalpha = zero(eltype(alpha))
+    ax = eachindex(alpha)
+    for j in ax
+        alphaj = alpha[j]
+        for i in j:last(ax)
+            Aij = abs(A[i, j])
+            iszero(Aij) && continue
+            Δα = alpha[i] + alphaj - logA[i, j]
+            dalpha = max(dalpha, -Δα/2)
+        end
+    end
+    alpha .+= dalpha
+    return alpha
+end
+
+function simplex!(
+        alpha::AbstractVector{T}, logA, A, alphastar, B, afrak;
+        exclude_diagonal::Bool=false, itersimplex=length(alpha), activemax=length(alpha)+1, tol=sqrt(eps(T))
+    ) where T
+    ax = eachindex(alpha)
+    p, g = similar(alpha), similar(alpha)
+    actives = sizehint!(Vector{Tuple{Int, Int}}(), activemax)
+    # We'll declare J to be of its largest possible size, but many rows may be all-zeros
+    J = LinearOperator{T, Vector{T}}(activemax, length(ax), false, false,
+        (y, x) -> begin
+            fill!(y, zero(T))
+            for (k, (i, j)) in enumerate(actives)
+                y[k] = x[i] + x[j]
+            end
+            return y
+        end,
+        (y, x) -> begin
+            fill!(y, zero(T))
+            for (k, (i, j)) in enumerate(actives)
+                y[i] += x[k]
+                y[j] += x[k]
+            end
+            return y
+        end
+    )
+    # Declare the workspace for lslq
+    ws = LslqWorkspace(length(ax), activemax, Vector{T})
+    # Initialization and convergence check
+    alphatol = tol * sum(isfinite(αstari) ? abs(αi - αstari) : zero(αi) for (αi, αstari) in zip(alpha, alphastar))
+    objval = cover_qobjective(alpha, logA, A)
+    # Simplex method
+    for it = 1:itersimplex
+        # @show objval
+        # Compute the step direction
+        copyto!(p, alphastar)
+        p .-= alpha
+        # Find the active constraints
+        empty!(actives)
+        mul!(g, B, alpha)
+        for j in eachindex(alpha)
+            alphaj = alpha[j]
+            for i in j+exclude_diagonal:last(eachindex(alpha))
+                iszero(A[i, j]) && continue
+                Δα = alpha[i] + alphaj - logA[i, j]
+                if Δα < tol
+                    push!(actives, (i, j))
+                end
+            end
+        end
+        length(actives) > activemax && break
+        g .-= afrak
+        lslq!(ws, transpose(J), g; M=B, ldiv=true)
+        nu, stats = Krylov.results(ws)
+        Krylov.issolved(ws) || @warn "LSLQ did not solve successfully (status = $stats)"
+        mul!(g, J', nu)   # re-use `g`, which no longer needs to hold the gradient and can just be temporary storage
+        p .+= B \ g
+        norm(p) < alphatol && break
+        γ = symcover_maxstep(p, alpha, logA, A; tol)
+        γ = min(γ, 1)
+        g .= alpha .+ γ .* p
+        objvalnew = cover_qobjective(g, logA, A)
+        objvalnew > objval && break
+        alpha .+= γ .* p
+        objval = objvalnew
+    end
+    return alpha
+end
+
+function symcover_maxstep(p, alpha::AbstractVector{T}, logA, A; tol=sqrt(eps(T))) where T
+    ax = eachindex(alpha)
+    step = typemax(eltype(alpha))
+    for j in eachindex(alpha)
+        alphaj = alpha[j]
+        pj = p[j]
+        for i in j:last(ax)
+            iszero(A[i, j]) && continue
+            Δα = alpha[i] + alphaj - logA[i, j]
+            Δα < tol && continue # should already be handled by the projection
+            Δp = p[i] + pj
+            if Δp < zero(Δp)
+                step = min(step, abs(Δα) / abs(Δp))
+            end
+        end
+    end
+    return step
+end
+
+
+function tighten_cover!(a::AbstractVector{T}, A::AbstractMatrix; iter::Int=3, exclude_diagonal::Bool=false) where T
+    ax = axes(A, 1)
+    axes(A, 2) == ax || throw(ArgumentError("`tighten_cover!(a, A)` requires a square matrix `A`"))
+    eachindex(a) == ax || throw(DimensionMismatch("indices of `a` must match the indexing of `A`"))
+    aratio = similar(a)
+    for _ in 1:iter
+        fill!(aratio, typemax(T))
+        if exclude_diagonal
+            for j in eachindex(a)
+                aratioj, aj = aratio[j], a[j]
+                for i in first(ax):j-1
+                    Aij = T(abs(A[i, j]))
+                    r = ifelse(iszero(Aij), typemax(T), a[i] * aj / Aij)
+                    aratio[i] = min(aratio[i], r)
+                    aratioj = min(aratioj, r)
+                end
+                for i in j+1:last(ax)
+                    Aij = T(abs(A[i, j]))
+                    r = ifelse(iszero(Aij), typemax(T), a[i] * aj / Aij)
+                    aratio[i] = min(aratio[i], r)
+                    aratioj = min(aratioj, r)
+                end
+                aratio[j] = aratioj
+            end
+        else
+            for j in eachindex(a)
+                aratioj, aj = aratio[j], a[j]
+                for i in eachindex(a)
+                    Aij = T(abs(A[i, j]))
+                    r = ifelse(iszero(Aij), typemax(T), a[i] * aj / Aij)
+                    aratio[i] = min(aratio[i], r)
+                    aratioj = min(aratioj, r)
+                end
+                aratio[j] = aratioj
+            end
+        end
+        a ./= sqrt.(aratio)
+    end
+    return a
+end
+
+function tighten_cover!(alpha::AbstractVector{T}, logA::AbstractMatrix, A::AbstractMatrix; iter::Int=3, exclude_diagonal::Bool=false) where T
+    ax = axes(A, 1)
+    axes(A, 2) == ax || throw(ArgumentError("`tighten_cover!(alpha, logA, A)` requires a square matrix `A`"))
+    eachindex(alpha) == ax || throw(DimensionMismatch("indices of `alpha` must match the indexing of `A`"))
+    alphagap = similar(alpha)
+    for _ in 1:iter
+        fill!(alphagap, typemax(T))
+        for j in ax
+            alphagapj, alphaj = alphagap[j], alpha[j]
+            for i in ax
+                exclude_diagonal && i == j && continue
+                iszero(A[i, j]) && continue
+                gap = alpha[i] + alphaj - logA[i, j]
+                alphagap[i] = min(alphagap[i], gap)
+                alphagapj = min(alphagapj, gap)
+            end
+            alphagap[j] = alphagapj
+        end
+        alpha .-= alphagap ./ 2
+    end
+    return alpha
+end
+
+function tighten_cover!(a::AbstractVector{T}, b::AbstractVector{T}, A::AbstractMatrix; iter::Int=3) where T
+    aratio = fill(typemax(T), eachindex(a))
+    bratio = fill(typemax(T), eachindex(b))
+    eachindex(a) == axes(A, 1) || throw(DimensionMismatch("indices of a must match row-indexing of A"))
+    eachindex(b) == axes(A, 2) || throw(DimensionMismatch("indices of b must match column-indexing of A"))
+    for _ in 1:iter
+        fill!(aratio, typemax(T))
+        fill!(bratio, typemax(T))
+        for j in eachindex(b)
+            bratioj, bj = bratio[j], b[j]
+            for i in eachindex(a)
+                Aij = T(abs(A[i, j]))
+                r = ifelse(iszero(Aij), typemax(T), a[i] * bj / Aij)
+                aratio[i] = min(aratio[i], r)
+                bratioj = min(bratioj, r)
+            end
+            bratio[j] = bratioj
+        end
+        a ./= sqrt.(aratio)
+        b ./= sqrt.(bratio)
+    end
+    return a, b
+end
+
+
 # ============================================================
 # Adjoint and Transpose wrappers
 #
@@ -591,11 +637,11 @@ function cover_lmin end
 # (b, a) of P.  Therefore: unwrap the parent, compute its cover, and swap.
 # ============================================================
 
-cover_lobjective(a, b, A::Adjoint)   = cover_lobjective(b, a, parent(A))
-cover_lobjective(a, b, A::Transpose) = cover_lobjective(b, a, parent(A))
+cover_lobjective(a::AbstractVector, b::AbstractVector, A::Adjoint)   = cover_lobjective(b, a, parent(A))
+cover_lobjective(a::AbstractVector, b::AbstractVector, A::Transpose) = cover_lobjective(b, a, parent(A))
 
-cover_qobjective(a, b, A::Adjoint)   = cover_qobjective(b, a, parent(A))
-cover_qobjective(a, b, A::Transpose) = cover_qobjective(b, a, parent(A))
+cover_qobjective(a::AbstractVector, b::AbstractVector, A::Adjoint)   = cover_qobjective(b, a, parent(A))
+cover_qobjective(a::AbstractVector, b::AbstractVector, A::Transpose) = cover_qobjective(b, a, parent(A))
 
 function tighten_cover!(a::AbstractVector{T}, b::AbstractVector{T}, A::Adjoint; kwargs...) where T
     tighten_cover!(b, a, parent(A); kwargs...)

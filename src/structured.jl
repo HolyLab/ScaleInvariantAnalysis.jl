@@ -13,7 +13,7 @@ const PlusMinus1Banded = Union{SymTridiagonal, Bidiagonal, Tridiagonal}
 # Diagonal
 # ============================================================
 
-function cover_lobjective(a, b, D::Diagonal)
+function cover_lobjective(a::AbstractVector, b::AbstractVector, D::Diagonal)
     T = float(promote_type(eltype(a), eltype(b), eltype(D)))
     s = zero(T)
     for i in eachindex(D.diag)
@@ -24,7 +24,7 @@ function cover_lobjective(a, b, D::Diagonal)
     return s
 end
 
-function cover_qobjective(a, b, D::Diagonal)
+function cover_qobjective(a::AbstractVector, b::AbstractVector, D::Diagonal)
     T = float(promote_type(eltype(a), eltype(b), eltype(D)))
     s = zero(T)
     for i in eachindex(D.diag)
@@ -81,7 +81,7 @@ end
 # PlusMinus1Banded  (SymTridiagonal, Bidiagonal, Tridiagonal)
 # ============================================================
 
-function cover_lobjective(a, b, A::PlusMinus1Banded)
+function cover_lobjective(a::AbstractVector, b::AbstractVector, A::PlusMinus1Banded)
     T = float(promote_type(eltype(a), eltype(b), eltype(A)))
     s = zero(T)
     n = size(A, 1)
@@ -98,7 +98,7 @@ function cover_lobjective(a, b, A::PlusMinus1Banded)
     return s
 end
 
-function cover_qobjective(a, b, A::PlusMinus1Banded)
+function cover_qobjective(a::AbstractVector, b::AbstractVector, A::PlusMinus1Banded)
     T = float(promote_type(eltype(a), eltype(b), eltype(A)))
     s = zero(T)
     n = size(A, 1)

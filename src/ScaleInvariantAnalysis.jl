@@ -1,11 +1,14 @@
 module ScaleInvariantAnalysis
 
 using LinearAlgebra
+using LinearOperators
+using Krylov
 using PrecompileTools
 
 export cover_lobjective, cover_qobjective, cover, symcover, symdiagcover, cover_lmin, symcover_lmin, cover_qmin, symcover_qmin
 export dotabs
 
+include("linalg.jl")
 include("covers.jl")
 include("structured.jl")
 
