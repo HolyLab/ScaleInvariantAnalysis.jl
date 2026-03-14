@@ -286,7 +286,7 @@ end
 
 function symcover_init_new(logA::AbstractMatrix, A::AbstractMatrix)
     ax = axes(A, 1)
-    alpha = similar(logA, ax)
+    alpha = fill!(similar(logA, ax), zero(eltype(logA)))
     nza  = zeros(Int, ax)
     for j in ax
         for i in j:last(ax)
@@ -300,10 +300,11 @@ function symcover_init_new(logA::AbstractMatrix, A::AbstractMatrix)
             end
         end
     end
-    nztotal = sum(nza)
-    halfmu = iszero(nztotal) ? zero(T) : sum(alpha) / (2 * nztotal)
-    alpha .= alpha ./ nza .- halfmu
-    return alpha
+    afrak = copy(alpha)
+    u = nza ./ sqrt(sum(nza))
+    B = ShermanMorrisonMatrix(Diagonal(nza), u, u)
+    ldiv!(B, alpha)
+    return alpha, nza, afrak, B
 end
 
 function symcover_makefeasible_shift!(alpha, logA, A)
@@ -360,7 +361,7 @@ function symcover_tighten_alpha!(alpha::AbstractVector{T}, logA, A) where T
     return alpha
 end
 
-function symcover_stepdirection!(p::AbstractVector, alpha::AbstractVector{T}, logA, A, alphastar, nza; tol=sqrt(eps(T))) where T
+function symcover_stepdirection!(p::AbstractVector, alpha::AbstractVector{T}, logA, A, alphastar, nza, B, afrak; tol=sqrt(eps(T))) where T
     ax = eachindex(alpha)
     copyto!(p, alphastar)
     p .-= alpha
@@ -377,20 +378,33 @@ function symcover_stepdirection!(p::AbstractVector, alpha::AbstractVector{T}, lo
             end
         end
     end
-    @show actives
-    J = zeros(T, length(actives), length(ax))
+    J = LinearOperator{T, Vector{T}}(length(actives), length(ax), false, false,
+        (y, x) -> begin
+            fill!(y, zero(T))
+            for (k, (i, j)) in enumerate(actives)
+                y[k] = x[i] + x[j]
+            end
+            return y
+        end,
+        (y, x) -> begin
+            fill!(y, zero(T))
+            for (k, (i, j)) in enumerate(actives)
+                y[i] += x[k]
+                y[j] += x[k]
+            end
+            return y
+        end
+    )
+    Jmtrx = zeros(T, length(actives), length(ax))
     for (k, (i, j)) in enumerate(actives)
-        J[k, i] = 1
-        J[k, j] += 1
+        Jmtrx[k, i] = 1
+        Jmtrx[k, j] += 1
     end
-    # Compute B \ J', where B = Diagonal(nza) + u*u' with u = nza/sqrt(sum(nza))
-    u = nza ./ sqrt(sum(nza))
-    B = Diagonal(nza) + u * u'
-    N = B \ J'
-    calBinv = J * N
-    @show calBinv
-    nu = pinv(calBinv) * (J * p)
-    p .-= N * nu
+    g = B * alpha - afrak
+    nu, status = lslq(transpose(J), g; M=B, ldiv=true)
+    status.solved || @warn "LSLQ did not solve successfully (status = $(status))"
+    mul!(g, J', nu)   # re-use temporary storage
+    p .+= B \ g
     return p
 end
 
