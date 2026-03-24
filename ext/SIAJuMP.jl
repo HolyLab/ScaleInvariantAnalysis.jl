@@ -79,9 +79,9 @@ function ScaleInvariantAnalysis.cover_lmin(A)
     @variable(model, α[1:m])
     @variable(model, β[1:n])
 
-    nonzero_rows = count(!iszero, A, dims=1)
+    nonzero_rows = count(!iszero, A, dims=1)'
     nonzero_cols = count(!iszero, A, dims=2)
-    @objective(model, Min, dot(α, nonzero_rows) + dot(β, nonzero_cols))
+    @objective(model, Min, dot(α, nonzero_cols) + dot(β, nonzero_rows))
     for i in 1:m
         for j in 1:n
             if A[i, j] != 0
