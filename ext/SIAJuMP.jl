@@ -3,6 +3,7 @@ module SIAJuMP
 using JuMP: JuMP, @variable, @objective, @constraint
 using HiGHS: HiGHS
 using ScaleInvariantAnalysis
+using LinearAlgebra: dot
 
 # Reference implementation for a symmetric matrix cover
 function ScaleInvariantAnalysis.symcover_qmin(A)
@@ -34,9 +35,9 @@ function ScaleInvariantAnalysis.symcover_lmin(A)
     JuMP.set_silent(model)
     @variable(model, α[1:n])
 
-    nonzero_rows = count(!iszero, A, dims=1)
+    nonzero_rows = count(!iszero, A, dims=1)'
     nonzero_cols = count(!iszero, A, dims=2)
-    @objective(model, Min, dot(α, nonzero_rows.*nonzero_cols))
+    @objective(model, Min, dot(α, nonzero_rows.+nonzero_cols))
     for i in 1:n
         for j in i:n
             if A[i, j] != 0
