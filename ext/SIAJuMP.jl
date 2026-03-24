@@ -33,7 +33,10 @@ function ScaleInvariantAnalysis.symcover_lmin(A)
     model = JuMP.Model(HiGHS.Optimizer)
     JuMP.set_silent(model)
     @variable(model, α[1:n])
-    @objective(model, Min, sum(α))
+
+    nonzero_rows = count(!iszero, A, dims=1)
+    nonzero_cols = count(!iszero, A, dims=2)
+    @objective(model, Min, dot(α, nonzero_rows.*nonzero_cols))
     for i in 1:n
         for j in i:n
             if A[i, j] != 0
@@ -74,7 +77,10 @@ function ScaleInvariantAnalysis.cover_lmin(A)
     JuMP.set_silent(model)
     @variable(model, α[1:m])
     @variable(model, β[1:n])
-    @objective(model, Min, sum(α) + sum(β))
+
+    nonzero_rows = count(!iszero, A, dims=1)
+    nonzero_cols = count(!iszero, A, dims=2)
+    @objective(model, Min, dot(α, nonzero_rows) + dot(β, nonzero_cols))
     for i in 1:m
         for j in 1:n
             if A[i, j] != 0
