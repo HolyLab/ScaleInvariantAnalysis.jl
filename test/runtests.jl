@@ -149,6 +149,17 @@ using Test
             @test cover_qobjective(a_qmin, A) <= cover_qobjective(a_fast, A) + 1e-8
             @test cover_qobjective(a_qmin, A) <= cover_qobjective(a_lmin, A) + 1e-8
         end
+        # Case with zeros to ensure optimal solution
+        A = [0 0 1; 0 0 2; 1 2 1]
+        a = symcover_lmin(A)
+        @test all(a[i] * a[j] >= abs(A[i, j]) - 1e-10 for i in axes(A, 1), j in axes(A, 2))
+        @test a ≈ [1, 2, 1]
+        @test abs(cover_lobjective(a, A)) < 1e-10
+        a = symcover_qmin(A)
+        @test all(a[i] * a[j] >= abs(A[i, j]) - 1e-10 for i in axes(A, 1), j in axes(A, 2))
+        @test a ≈ [1, 2, 1]
+        @test abs(cover_qobjective(a, A)) < 1e-10
+
         for A in ([2.0 1.0; 1.0 3.0], [100.0 1.0; 0.5 0.01], [1.0 2.0 3.0; 4.0 5.0 6.0])
             a_fast, b_fast = cover(A)
             a_lmin, b_lmin = cover_lmin(A)
@@ -159,6 +170,13 @@ using Test
             @test cover_qobjective(a_qmin, b_qmin, A) <= cover_qobjective(a_fast, b_fast, A) + 1e-8
             @test cover_qobjective(a_qmin, b_qmin, A) <= cover_qobjective(a_lmin, b_lmin, A) + 1e-8
         end
+        A = [0 0 0 1; 1 1 0 2; 1 0 2 1]
+        a, b = cover_lmin(A)
+        @test all(a[i] * b[j] >= abs(A[i, j]) - 1e-10 for i in axes(A, 1), j in axes(A, 2))
+        @test cover_lobjective(a, b, A) ≈ log(2)
+        a, b = cover_qmin(A)
+        @test all(a[i] * b[j] >= abs(A[i, j]) - 1e-10 for i in axes(A, 1), j in axes(A, 2))
+        @test cover_qobjective(a, b, A) ≈ 2*log(sqrt(2))^2
     end
 
     @testset "SparseMatrixCSC" begin
